@@ -1,3 +1,4 @@
+import { faceMovementWeights } from "./deformation.js";
 import { cloneMesh, extrude, faceNormal } from "./mesh.js";
 
 const EPSILON = 1e-8;
@@ -77,21 +78,30 @@ export function dragDistance(
 export function inwardLimit(mesh, face) {
   const ids = mesh.faces[face],
     selected = new Set(ids),
+    weights = faceMovementWeights(mesh, face),
     normal = faceNormal(mesh, ids),
     depths = [];
+  const activeVertices = new Set(mesh.faces.flat());
+  if (
+    weights.some(
+      (weight, id) =>
+        weight > 1e-8 && activeVertices.has(id) && !selected.has(id),
+    )
+  )
+    return 0;
   const dot = (a, b) => a.reduce((sum, value, i) => sum + value * b[i], 0);
   for (const polygon of mesh.faces)
     for (let edge = 0; edge < polygon.length; edge++) {
       const a = polygon[edge],
         b = polygon[(edge + 1) % polygon.length];
-      if (selected.has(a) === selected.has(b)) continue;
-      const inside = mesh.vertices[selected.has(a) ? a : b],
-        outside = mesh.vertices[selected.has(a) ? b : a];
+      if (Math.abs(weights[a] - weights[b]) < 1e-8) continue;
+      const inside = mesh.vertices[weights[a] > weights[b] ? a : b],
+        outside = mesh.vertices[weights[a] > weights[b] ? b : a];
       const depth = dot(
         inside.map((v, i) => v - outside[i]),
         normal,
       );
-      if (depth > 1e-6) depths.push(depth);
+      if (depth > 1e-6) depths.push(depth / Math.abs(weights[a] - weights[b]));
     }
   if (!depths.length) {
     const level =

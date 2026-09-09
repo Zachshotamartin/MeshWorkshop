@@ -186,7 +186,10 @@ try {
   await screenshot("02.png");
   await reset();
   await page.getByLabel("Drag operation").selectOption("extrude");
-  const keyboard = page.locator("input[type=range]").first();
+  const keyboard = page.getByRole("slider", {
+    name: "Keyboard pull distance",
+    exact: true,
+  });
   await keyboard.focus();
   await keyboard.fill("0.25");
   await keyboard.dispatchEvent("input");

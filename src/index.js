@@ -1,3 +1,5 @@
+import { createFeatureEditing } from "./featureEditing.js";
+import { assertSafeEdit, constrainEdit } from "./intersections.js";
 import {
   bevelFace,
   splitFace,
@@ -27,6 +29,7 @@ export const metadata = {
   technique:
     "Direct face manipulation, polygon topology editing and Catmull–Clark subdivision",
   instructions: [
+    "Choose Faces, Edges, or Vertices. Edge and vertex bevels are inward chamfers: select a visible feature and drag right to deepen the cut, or left to reduce it.",
     "Grab a visible face. Pull outward to extend it; push inward to shorten it. Clicking without dragging selects the face.",
     "Hold Shift to snap the pull to 0.1 units. Escape cancels; releasing commits one undo step.",
     "Drag the background or right-drag anywhere to orbit. For a face looking straight at the camera, drag upward to pull it toward you.",
@@ -34,8 +37,8 @@ export const metadata = {
     "Keyboard: choose Previous/Next face, adjust Keyboard pull distance, then press Enter on that slider or the viewport.",
   ],
   limitations: [
-    "Pulls are bounded to 3 model units. Inward pushes move the current face and stop before the nearest supporting layer; this is not a general self-intersection solver.",
-    "Face bevels and insets move vertices toward their centroid, not a constant-distance CAD offset. Extreme edits can intersect other parts of an already complex mesh.",
+    "Pulls are bounded to 3 model units. Edits stop at intersecting surfaces; inward pushes also stop when another extrusion depends on the selected face. Separate those edits with Undo before shortening their parent.",
+    "Face bevels and insets move corners toward their centroid rather than using a CAD offset. Twisted or collapsed polygons are rejected. Subdivided nonplanar faces may need to be split into triangles before editing.",
     "Editing and subdivision are bounded to 16,000 faces. Background and right-drag keep camera control separate from face editing.",
   ],
 };
@@ -54,7 +57,8 @@ export function createExperiment(ctx) {
     edges,
     normal,
     triangles = [],
-    drag = null;
+    drag = null,
+    featureEditing = null;
   const oldRight = ctx.controls.mouseButtons.RIGHT;
   ctx.controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
   const oldAriaLabel = ctx.canvas.getAttribute("aria-label");
@@ -190,15 +194,18 @@ export function createExperiment(ctx) {
     ctx.canvas.dataset.faceCount = String(stats.faces);
     ctx.canvas.dataset.undoCount = String(history.length);
     ctx.invalidate();
+    featureEditing?.refresh();
   }
   function remember(source, face) {
     history.push({ mesh: cloneMesh(source), selected: face });
     if (history.length > 24) history.shift();
   }
-  function apply(fn, label) {
+  function apply(fn, label, checkIntersections = false) {
+    featureEditing?.cancel();
     if (drag) cancelDrag("Pull canceled before another edit.");
     try {
       const next = fn(mesh);
+      if (checkIntersections) assertSafeEdit(mesh, next, selected);
       remember(mesh, selected);
       mesh = next;
       selected = Math.min(selected, mesh.faces.length - 1);
@@ -218,15 +225,28 @@ export function createExperiment(ctx) {
     capFraction = fraction,
     widthChanged = false,
   ) {
-    if (operation !== "bevel") return previewExtrusion(source, face, distance);
+    if (operation !== "bevel")
+      return assertSafeEdit(
+        source,
+        previewExtrusion(source, face, distance),
+        face,
+      );
     if (Math.abs(distance) < MIN_EXTRUSION && !widthChanged)
       return cloneMesh(source);
     const base =
       distance < 0 ? previewExtrusion(source, face, distance) : source;
-    return bevelFace(base, face, capFraction, Math.max(0, distance));
+    return assertSafeEdit(
+      source,
+      bevelFace(base, face, capFraction, Math.max(0, distance)),
+      face,
+    );
   }
   function keyboardPull() {
     if (Math.abs(keyboardDistance) < MIN_EXTRUSION) return;
+    if (keyboardDistance < 0 && inwardLimit(mesh, selected) === 0) {
+      ctx.setStatus("Blocked: another extrusion is attached to this face.");
+      return;
+    }
     apply(
       (m) =>
         operation === "bevel"
@@ -241,6 +261,7 @@ export function createExperiment(ctx) {
               Math.max(inwardLimit(m, selected), keyboardDistance),
             ),
       "Selected face pulled",
+      true,
     );
   }
   function selectFace(next) {
@@ -257,6 +278,7 @@ export function createExperiment(ctx) {
     ["Cube", "Terraced tower", "Studio wing", "Rounded vessel"],
     "Cube",
     (name) => {
+      featureEditing?.cancel();
       if (drag) cancelDrag();
       mesh = preset(name);
       selected = Math.min(5, mesh.faces.length - 1);
@@ -313,7 +335,7 @@ export function createExperiment(ctx) {
     onChange: (value) => (fraction = value),
   });
   ui.button("Inset face", () =>
-    apply((m) => inset(m, selected, fraction), "Face inset"),
+    apply((m) => inset(m, selected, fraction), "Face inset", true),
   );
   ui.button("Split face diagonally", () =>
     apply(
@@ -331,6 +353,7 @@ export function createExperiment(ctx) {
     ctx.invalidate();
   });
   ui.button("Undo edit", () => {
+    featureEditing?.cancel();
     if (drag) {
       cancelDrag();
       return;
@@ -347,6 +370,7 @@ export function createExperiment(ctx) {
     ctx.setStatus("Previous mesh restored.");
   });
   ui.button("Reset to cube", () => {
+    featureEditing?.cancel();
     if (drag) cancelDrag();
     mesh = cube();
     selected = 5;
@@ -442,6 +466,7 @@ export function createExperiment(ctx) {
       : "Pull along the gold arrow to extend; push against it to shorten. Background or right-drag orbits.";
     ctx.setStatus(
       message ||
+        state.blocked ||
         (accepted
           ? `Face ${selected + 1} ${state.distance < 0 ? "shortened" : "shaped"} by ${Math.abs(state.distance).toFixed(2)} units${operation === "bevel" ? ` · cap ${Math.round((1 - state.fraction) * 100)}%` : ""}. One undo step saved.`
           : `Face ${selected + 1} selected. No geometry changed.`),
@@ -452,10 +477,30 @@ export function createExperiment(ctx) {
   ) {
     finishDrag(false, message);
   }
+  featureEditing = createFeatureEditing(ctx, {
+    get: () => mesh,
+    object: () => object,
+    cancelFace: () => {
+      if (drag) cancelDrag();
+    },
+    show: (next) => {
+      mesh = next;
+      selected = Math.min(selected, mesh.faces.length - 1);
+      rebuild();
+    },
+    commit: (next, source) => {
+      remember(source, selected);
+      mesh = next;
+      selected = mesh.faces.length - 1;
+      hovered = -1;
+      rebuild();
+    },
+  });
   ctx.listen(
     ctx.canvas,
     "pointerdown",
     (event) => {
+      if (featureEditing.active) return;
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey)
         return;
       if (drag) {
@@ -537,10 +582,17 @@ export function createExperiment(ctx) {
             drag.threshold
         )
           return;
-        const distance = dragDistance(drag.axis, drag.start, current, {
+        const requestedDistance = dragDistance(drag.axis, drag.start, current, {
           snap: event.shiftKey,
-          minDistance: drag.minDistance,
+          minDistance: -3,
         });
+        const distance = Math.max(drag.minDistance, requestedDistance);
+        const limitMessage =
+          requestedDistance < drag.minDistance - 0.002
+            ? drag.minDistance === 0
+              ? "Blocked: another extrusion is attached to this face."
+              : "Blocked by the supporting surface."
+            : null;
         const width = bevelWidth(
           drag.axis,
           drag.start,
@@ -559,35 +611,47 @@ export function createExperiment(ctx) {
             Math.abs(distance - drag.distance) > 1e-5 ||
             Math.abs(capFraction - drag.fraction) > 1e-5
           ) {
-            mesh = preview(
-              drag.source,
-              drag.face,
-              distance,
-              capFraction,
-              widthChanged,
+            const limited = constrainEdit(
+              ([depth, cap]) =>
+                preview(
+                  drag.source,
+                  drag.face,
+                  depth,
+                  cap,
+                  operation === "bevel" &&
+                    Math.abs(cap - drag.initialFraction) > 0.005,
+                ),
+              [drag.distance, drag.fraction],
+              [distance, capFraction],
             );
-            drag.fraction = capFraction;
-            drag.widthChanged = widthChanged;
-            drag.distance = distance;
+            mesh = limited.mesh;
+            drag.fraction = limited.values[1];
+            drag.widthChanged =
+              operation === "bevel" &&
+              Math.abs(drag.fraction - drag.initialFraction) > 0.005;
+            drag.distance = limited.values[0];
+            drag.blocked = limited.blocked || limitMessage;
             rebuild();
           }
+          if (limitMessage) drag.blocked = limitMessage;
           ctx.canvas.dataset.dragging = "preview";
           feedbackAt(
             event,
             drag.axis,
-            `${distance.toFixed(2)} units${operation === "bevel" ? ` · cap ${Math.round((1 - capFraction) * 100)}%` : ""}${event.shiftKey ? " · snap" : ""}`,
+            `${drag.distance.toFixed(2)} units${operation === "bevel" ? ` · cap ${Math.round((1 - drag.fraction) * 100)}%` : ""}${drag.blocked ? " · blocked" : event.shiftKey ? " · snap" : ""}`,
           );
           hint.textContent =
-            Math.abs(distance) < MIN_EXTRUSION && !widthChanged
+            drag.blocked ||
+            (Math.abs(distance) < MIN_EXTRUSION && !widthChanged
               ? "Pull to extend, push to shorten. In Bevel, drag sideways to change cap width."
-              : `${distance.toFixed(2)} units · release to keep · Escape to cancel`;
+              : `${drag.distance.toFixed(2)} units · release to keep · Escape to cancel`);
           ctx.invalidate();
         } catch (error) {
           cancelDrag(error.message);
         }
         return;
       }
-      if (event.buttons !== 0) return;
+      if (featureEditing.active || event.buttons !== 0) return;
       const hit = faceHit(event),
         next = hit ? triangles[hit.faceIndex] : -1;
       if (next !== hovered) {
@@ -640,6 +704,7 @@ export function createExperiment(ctx) {
         event.key === "Enter" &&
         !event.repeat &&
         event.target === ctx.canvas &&
+        !featureEditing.active &&
         !drag
       ) {
         event.preventDefault();
@@ -661,6 +726,7 @@ export function createExperiment(ctx) {
   );
   return {
     deactivate() {
+      featureEditing.deactivate();
       if (drag) cancelDrag("Pull canceled because another tool was opened.");
       hovered = -1;
       repaint();
@@ -671,6 +737,7 @@ export function createExperiment(ctx) {
         delete ctx.canvas.dataset[key];
     },
     activate() {
+      featureEditing.activate();
       ctx.canvas.style.cursor = "default";
       ctx.canvas.setAttribute(
         "aria-label",
@@ -681,6 +748,7 @@ export function createExperiment(ctx) {
       ctx.canvas.dataset.undoCount = String(history.length);
     },
     dispose() {
+      featureEditing.dispose();
       if (drag) cancelDrag();
       feedback.remove();
       arrow.remove();

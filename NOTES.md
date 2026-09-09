@@ -6,3 +6,5 @@
 - Actual captured examples are in `examples/01.png`, `examples/02.png`, with `examples/manifest.json`. The additional `mobile-drag.png` is a verification screenshot; it is not a third gallery item.
 - Run output is written to ignored `output/browser-drag-results.json`.
 - No GitHub Actions added. Publishing is coordinated by the parent task after verification.
+
+- Added branch-dependency regression in all six orientations, obstacle crossing and enclosure tests, all 12 cube edges and 8 vertices, repeated chamfers, topology/volume checks, actual feature picking and drag, Escape, outward rejection, and mobile keyboard editing.
