@@ -51,6 +51,7 @@ export function createExperiment(ctx) {
     keyboardDistance = 0.55,
     fraction = 0.22,
     operation = "extrude",
+    selectionMode = "face",
     wire = true;
   let history = [],
     object,
@@ -116,11 +117,11 @@ export function createExperiment(ctx) {
       c = new THREE.Color();
     triangles.forEach((face, triangle) => {
       c.set(
-        face === selected
+        selectionMode === "face" && face === selected
           ? drag?.active
             ? 0xf5c494
             : 0xe8b280
-          : face === hovered
+          : selectionMode === "face" && face === hovered
             ? 0xd7debd
             : 0xacc6a2,
       );
@@ -186,15 +187,34 @@ export function createExperiment(ctx) {
       ]),
       normalMaterial,
     );
+    normal.name = "mesh-face-normal";
+    normal.visible = selectionMode === "face";
     root.add(normal);
     repaint();
     const stats = topology(mesh);
-    info.textContent = `Face ${selected + 1} of ${stats.faces} · ${stats.vertices} vertices · ${stats.edges} edges · ${stats.boundary} boundary edges`;
+    updateInfo(stats);
     ctx.canvas.dataset.selectedFace = String(selected);
     ctx.canvas.dataset.faceCount = String(stats.faces);
     ctx.canvas.dataset.undoCount = String(history.length);
     ctx.invalidate();
     featureEditing?.refresh();
+  }
+  function updateInfo(stats = topology(mesh)) {
+    info.textContent = `${selectionMode === "face" ? `Face ${selected + 1} of` : "Mesh ·"} ${stats.faces} ${selectionMode === "face" ? "·" : "faces ·"} ${stats.vertices} vertices · ${stats.edges} edges · ${stats.boundary} boundary edges`;
+  }
+  function changeSelectionMode(mode) {
+    selectionMode = mode;
+    hovered = -1;
+    if (normal) normal.visible = mode === "face";
+    hideFeedback();
+    repaint();
+    updateInfo();
+    hint.textContent = mode === "face"
+      ? "Drag a face outward to extend it; push inward to shorten it. Background or right-drag orbits."
+      : `Click ${mode === "edge" ? "a highlighted edge" : "a round corner handle"} to select it. Drag right to bevel inward; drag left to reduce the cut. Background or right-drag orbits.`;
+    ctx.canvas.setAttribute("aria-label", mode === "face"
+      ? "Mesh editor. Drag a face to extrude. Drag the background or right-drag to orbit. Enter pulls the selected face; Escape cancels a drag."
+      : `Mesh editor. Select ${mode === "edge" ? "an edge" : "a round vertex handle"} and drag right to bevel inward. Previous and Next feature buttons also select. Enter applies the keyboard bevel depth; Escape cancels.`);
   }
   function remember(source, face) {
     history.push({ mesh: cloneMesh(source), selected: face });
@@ -480,6 +500,7 @@ export function createExperiment(ctx) {
   featureEditing = createFeatureEditing(ctx, {
     get: () => mesh,
     object: () => object,
+    selectionMode: changeSelectionMode,
     cancelFace: () => {
       if (drag) cancelDrag();
     },
@@ -739,10 +760,6 @@ export function createExperiment(ctx) {
     activate() {
       featureEditing.activate();
       ctx.canvas.style.cursor = "default";
-      ctx.canvas.setAttribute(
-        "aria-label",
-        "Mesh editor. Drag a face to extrude. Drag the background or right-drag to orbit. Enter pulls the selected face; Escape cancels a drag.",
-      );
       ctx.canvas.dataset.selectedFace = String(selected);
       ctx.canvas.dataset.faceCount = String(mesh.faces.length);
       ctx.canvas.dataset.undoCount = String(history.length);

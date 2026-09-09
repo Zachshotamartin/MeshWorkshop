@@ -1,24 +1,16 @@
 import { meshEdges, featurePlane, bevelFeature } from "./featureBevel.js";
 import { constrainEdit } from "./intersections.js";
 import { cloneMesh } from "./mesh.js";
+import { createFeatureHandles } from "./featureHandles.js";
 
 export function createFeatureEditing(ctx, model) {
   const { THREE: T, ui, root, canvas } = ctx;
   let mode = "face",
     selection = null,
     drag = null,
-    markers = null,
+    hovered = null,
     keyboardDepth = 0.15;
-  const material = new T.LineBasicMaterial({
-      color: 0xffc88f,
-      depthTest: true,
-    }),
-    pointMaterial = new T.PointsMaterial({
-      color: 0xffc88f,
-      size: 10,
-      sizeAttenuation: false,
-      depthTest: true,
-    });
+  const handles = createFeatureHandles(ctx);
   const select = ui.select(
     "Selection",
     [
@@ -31,7 +23,7 @@ export function createFeatureEditing(ctx, model) {
       cancel();
       model.cancelFace();
       mode = value;
-      selection = null;
+      selection = hovered = null;
       sync();
       ctx.setStatus(
         mode === "face"
@@ -85,13 +77,6 @@ export function createFeatureEditing(ctx, model) {
   const faceHeading = [
     ...select.parentElement.parentElement.querySelectorAll("h3"),
   ].find((el) => el.textContent === "Selected face");
-  function removeMarkers() {
-    if (markers) {
-      root.remove(markers);
-      markers.geometry.dispose();
-      markers = null;
-    }
-  }
   function features(mesh = model.get()) {
     return mode === "edge"
       ? meshEdges(mesh).map((edge) => edge.ids)
@@ -112,39 +97,24 @@ export function createFeatureEditing(ctx, model) {
       dragOperation.parentElement.style.display = mode === "face" ? "" : "none";
     }
     canvas.dataset.selectionMode = mode;
+    canvas.style.cursor = "grab";
+    model.selectionMode(mode);
     refresh();
   }
   function refresh() {
-    removeMarkers();
-    canvas.dataset.selectedFeature =
-      selection === null ? "" : JSON.stringify(selection);
-    if (mode === "face") return;
-    const mesh = drag?.source || model.get(),
-      list = features(mesh);
-    if (selection !== null && !list.some((item) => same(item, selection)))
+    const mesh = model.get(), list = mode === "face" ? [] : features(mesh);
+    const previewCap = drag?.depth > 0.0005 ? mesh.faces.at(-1) : null;
+    if (!previewCap && selection !== null && !list.some((item) => same(item, selection)))
       selection = null;
-    const positions = [];
-    if (mode === "edge")
-      for (const ids of selection ? [selection] : list)
-        for (const id of ids) positions.push(...mesh.vertices[id]);
-    else
-      for (const id of selection !== null ? [selection] : list)
-        positions.push(...mesh.vertices[id]);
-    const geometry = new T.BufferGeometry().setAttribute(
-      "position",
-      new T.Float32BufferAttribute(positions, 3),
-    );
-    markers =
-      mode === "edge"
-        ? new T.LineSegments(geometry, material)
-        : new T.Points(geometry, pointMaterial);
-    markers.renderOrder = 2;
-    root.add(markers);
-    ctx.invalidate();
+    if (hovered !== null && !list.some((item) => same(item, hovered))) hovered = null;
+    canvas.dataset.selectedFeature = selection === null ? "" : JSON.stringify(selection);
+    canvas.dataset.hoveredFeature = hovered === null ? "" : JSON.stringify(hovered);
+    handles.show(mesh, mode, list, selection, hovered, previewCap);
   }
   function cycle(direction) {
     cancel();
     const list = features();
+    hovered = null;
     selection =
       list[
         (list.findIndex((item) => same(item, selection)) +
@@ -189,7 +159,7 @@ export function createFeatureEditing(ctx, model) {
     root.updateWorldMatrix(true, true);
     ctx.camera.updateMatrixWorld();
     let best = null,
-      score = event.pointerType === "touch" ? 24 : 12;
+      score = event.pointerType === "touch" ? 28 : 20;
     for (const item of features(mesh)) {
       let world, distance;
       if (mode === "vertex") {
@@ -234,6 +204,8 @@ export function createFeatureEditing(ctx, model) {
     ctx.controls.enabled = state.controls;
     ctx.controls.enableDamping = state.damping;
     delete canvas.dataset.dragging;
+    canvas.style.cursor = "grab";
+    hovered = null;
     if (commit && state.depth > 0.0005) {
       model.commit(state.mesh, state.source);
       selection = null;
@@ -268,7 +240,7 @@ export function createFeatureEditing(ctx, model) {
       event.preventDefault();
       event.stopImmediatePropagation();
       model.cancelFace();
-      selection = picked;
+      selection = hovered = picked;
       try {
         const source = cloneMesh(model.get()),
           plane = featurePlane(source, mode, selection);
@@ -278,6 +250,9 @@ export function createFeatureEditing(ctx, model) {
           plane,
           pointer: event.pointerId,
           start: event.clientX,
+          startY: event.clientY,
+          threshold: event.pointerType === "touch" ? 8 : 4,
+          active: false,
           depth: 0,
           controls: ctx.controls.enabled,
           damping: ctx.controls.enableDamping,
@@ -298,6 +273,7 @@ export function createFeatureEditing(ctx, model) {
         canvas.setPointerCapture(event.pointerId);
         canvas.focus({ preventScroll: true });
         canvas.dataset.dragging = "armed";
+        canvas.style.cursor = "grabbing";
         refresh();
         ctx.setStatus("Drag right to bevel inward; left reduces the cut.");
       } catch (error) {
@@ -311,9 +287,18 @@ export function createFeatureEditing(ctx, model) {
     canvas,
     "pointermove",
     (event) => {
-      if (!drag || event.pointerId !== drag.pointer) return;
+      if (mode === "face") return;
+      if (!drag) {
+        const next = event.buttons ? null : pick(event);
+        if (!same(next, hovered)) { hovered = next; refresh(); }
+        canvas.style.cursor = hovered === null ? "grab" : "pointer";
+        return;
+      }
+      if (event.pointerId !== drag.pointer) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (!drag.active && Math.hypot(event.clientX - drag.start, event.clientY - drag.startY) < drag.threshold) return;
+      drag.active = true;
       const raw = Math.max(
           0,
           (event.clientX - drag.start) * drag.unitsPerPixel,
@@ -334,10 +319,12 @@ export function createFeatureEditing(ctx, model) {
       ctx.setStatus(
         `${mode === "edge" ? "Edge" : "Vertex"} bevel ${drag.depth.toFixed(2)} · inward only${drag.blocked ? " · " + drag.blocked : ""}`,
       );
-      refresh();
     },
     { capture: true },
   );
+  ctx.listen(canvas, "pointerleave", () => {
+    if (!drag && hovered !== null) { hovered = null; refresh(); canvas.style.cursor = "grab"; }
+  });
   ctx.listen(
     canvas,
     "pointerup",
@@ -401,17 +388,16 @@ export function createFeatureEditing(ctx, model) {
     cancel,
     deactivate() {
       cancel();
-      removeMarkers();
+      hovered = null;
+      handles.clear();
     },
     activate() {
       sync();
     },
     dispose() {
       cancel();
-      removeMarkers();
-      material.dispose();
-      pointMaterial.dispose();
-      delete canvas.dataset.selectionMode;
+      handles.dispose();
+      for (const key of ["selectionMode", "selectedFeature", "hoveredFeature"]) delete canvas.dataset[key];
     },
   };
 }

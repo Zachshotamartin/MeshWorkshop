@@ -18,6 +18,8 @@ npm run dev
 
 ## Interaction
 
+- **Selection:** switch between Faces, Edges, and Vertices. Edge mode uses thick outlines; vertex mode uses round corner handles. Hover highlights a target, and clicking selects it in gold without highlighting the old face. Other visible handles remain available for the next selection.
+- **Edge and vertex bevel:** drag a selected handle right to cut inward, or left to reduce the preview. A small click movement does not start a cut. Hidden handles cannot be picked through the mesh. Previous/Next feature and Enter on the bevel-depth slider provide a keyboard alternative.
 - **Drag a face:** select its nearest visible surface, pull outward to extend it, or push inward to shorten the existing face. The floating arrow and distance readout show the gesture. Clicking without moving only selects.
 - **Face looking directly at the camera:** drag upward to pull it toward you. This avoids unstable projection when the normal has no useful screen-space direction.
 - **Shift:** snap the pull to 0.1 model units.

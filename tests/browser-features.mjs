@@ -88,9 +88,49 @@ try {
     ["vertex", [1, 1, 1]],
   ]) {
     await button("Reset to cube").click();
+    await selection.selectOption("face");
+    await page.getByRole("combobox", { name: "Drag operation", exact: true }).selectOption("bevel");
     await selection.selectOption(mode);
+    assert.equal(await page.locator("svg[data-normal]").isVisible(), false);
+    const visual = await page.evaluate(() => {
+      const { root } = window.fixture.ctx;
+      const mesh = root.children.find((object) => object.isMesh && object.material.vertexColors);
+      const colors = mesh.geometry.getAttribute("color");
+      const distinct = new Set(Array.from({ length: colors.count }, (_, i) =>
+        [colors.getX(i), colors.getY(i), colors.getZ(i)].join(",")));
+      return { faceColors: distinct.size, normal: root.getObjectByName("mesh-face-normal").visible };
+    });
+    assert.deepEqual(visual, { faceColors: 1, normal: false }, "Feature selection must not paint the previous face or show its normal");
     let start = await point(world);
+    // A forgiving hit area is deliberately wider than the visible line/ball.
+    await page.mouse.move(start[0] + 14, start[1]);
+    assert.notEqual(await canvas.getAttribute("data-hovered-feature"), "");
+    assert.equal(await canvas.evaluate((e) => e.style.cursor), "pointer");
+    await page.mouse.down();
+    await page.mouse.move(start[0] + 16, start[1] + 1);
+    await page.mouse.up();
+    const firstSelection = await canvas.getAttribute("data-selected-feature");
+    assert.notEqual(firstSelection, "");
+    assert.equal((await dump()).text, original.text, "Small click jitter must not cut the mesh");
+    const alternate = await point(mode === "edge" ? [0, 1, 1] : [1, 1, -1]);
+    await page.mouse.click(...alternate);
+    assert.notEqual(await canvas.getAttribute("data-selected-feature"), firstSelection, "Clicking a different handle switches selection");
+    const markers = await page.evaluate((mode) => {
+      const group = window.fixture.ctx.root.getObjectByName("mesh-feature-handles");
+      const available = group.getObjectByName(`${mode}-available`);
+      const selected = group.getObjectByName(`${mode}-selected`);
+      return {
+        count: mode === "edge" ? available.geometry.getAttribute("instanceStart").count : available.geometry.getAttribute("position").count,
+        size: mode === "edge" ? selected.material.linewidth : selected.material.size,
+        round: mode === "edge" || Boolean(selected.material.map && selected.material.alphaTest),
+        occlusion: selected.material.depthTest,
+      };
+    }, mode);
+    assert.deepEqual(markers, { count: mode === "edge" ? 12 : 8, size: mode === "edge" ? 6 : 24, round: true, occlusion: true });
+    start = await point(world);
     await page.mouse.click(...start);
+    await page.mouse.move(20, 20);
+    await canvas.screenshot({ path: `/tmp/mesh-${mode}-selection.png` });
     assert.equal((await dump()).text, original.text);
     start = await point(world);
     await page.mouse.move(...start);
@@ -101,6 +141,7 @@ try {
     assert.equal(beveled.faces.length, 7);
     assert.equal(beveled.vertices.length, 10);
     assert.equal(await canvas.getAttribute("data-undo-count"), "1");
+    await canvas.screenshot({ path: `/tmp/mesh-${mode}-beveled.png` });
     assert.notEqual(beveled.text, original.text);
     await button("Undo edit").click();
     assert.equal((await dump()).text, original.text);
@@ -118,6 +159,9 @@ try {
     await page.mouse.up();
     assert.equal((await dump()).text, original.text);
   }
+  await selection.selectOption("face");
+  assert.equal(await page.evaluate(() => window.fixture.ctx.root.getObjectByName("mesh-face-normal").visible), true);
+  assert.equal(await page.evaluate(() => Boolean(window.fixture.ctx.root.getObjectByName("mesh-feature-handles"))), false);
   await page.setViewportSize({ width: 390, height: 844 });
   await button("Reset to cube").click();
   await selection.selectOption("vertex");
@@ -136,7 +180,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: parent branch blocks, actual edge/vertex clicks and inward drags, unchanged source, exact undo, Escape, outward rejection, and mobile keyboard bevel.",
+    "PASS: parent branch blocks, clear face/edge/vertex highlights, round point handles, wider picking and re-selection, click jitter, actual inward drags, unchanged source, exact undo, Escape, outward rejection, and mobile keyboard bevel.",
   );
 } finally {
   await browser.close();
