@@ -95,6 +95,152 @@ function overlapsArea(points, clip, normal) {
   return polygonNormal(polygon) !== null;
 }
 
+// Convex clipping extends each cut to an infinite line. Recover the finite
+// remainder outline so those construction lines do not subdivide other faces.
+function repartition(pieces, vertices, removable) {
+  if (pieces.length < 2) return pieces;
+  const ids = [...new Set(pieces.flat())],
+    directed = new Map();
+  for (const face of pieces) {
+    const outline = face.flatMap((a, i) => {
+      const b = face[(i + 1) % face.length],
+        edge = sub(vertices[b], vertices[a]),
+        size = dot(edge, edge),
+        cuts = [];
+      for (const id of ids) {
+        if (id === a || id === b) continue;
+        const delta = sub(vertices[id], vertices[a]),
+          t = dot(delta, edge) / size;
+        if (
+          t * Math.sqrt(size) > EPS &&
+          (1 - t) * Math.sqrt(size) > EPS &&
+          length(
+            sub(
+              delta,
+              edge.map((v) => v * t),
+            ),
+          ) < EPS
+        )
+          cuts.push([t, id]);
+      }
+      cuts.sort((a, b) => a[0] - b[0]);
+      return [a, ...cuts.map(([, id]) => id)];
+    });
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i],
+        b = outline[(i + 1) % outline.length],
+        key = edgeKey(a, b),
+        previous = directed.get(key);
+      if (previous) {
+        if (previous[0] !== b || previous[1] !== a) return pieces;
+        directed.delete(key);
+      } else directed.set(key, [a, b]);
+    }
+  }
+  const next = new Map();
+  for (const [a, b] of directed.values()) {
+    if (next.has(a)) return pieces;
+    next.set(a, b);
+  }
+  const loops = [],
+    normal = polygonNormal(pieces[0].map((id) => vertices[id]));
+  while (next.size) {
+    const first = next.keys().next().value,
+      loop = [];
+    let id = first;
+    do {
+      if (!next.has(id)) return pieces;
+      loop.push(id);
+      const following = next.get(id);
+      next.delete(id);
+      id = following;
+    } while (id !== first);
+    // A hole requires a bridge; keep the existing safe convex partition.
+    const n = polygonNormal(loop.map((id) => vertices[id]));
+    if (!n || dot(n, normal) < 0) return pieces;
+    let changed = true;
+    while (changed && loop.length > 3) {
+      changed = false;
+      for (let i = 0; i < loop.length; i++) {
+        if (!removable(loop[i])) continue;
+        const a = vertices[loop[(i + loop.length - 1) % loop.length]],
+          b = vertices[loop[i]],
+          c = vertices[loop[(i + 1) % loop.length]],
+          edge = sub(c, a),
+          delta = sub(b, a),
+          t = dot(delta, edge) / dot(edge, edge);
+        if (
+          t > 0 &&
+          t < 1 &&
+          length(
+            sub(
+              delta,
+              edge.map((v) => v * t),
+            ),
+          ) < EPS
+        ) {
+          loop.splice(i, 1);
+          changed = true;
+          break;
+        }
+      }
+    }
+    loops.push(loop);
+  }
+  const result = [];
+  for (const loop of loops) {
+    const triangles = triangulatePolygon(vertices, loop);
+    if (triangles.length !== loop.length - 2) return pieces;
+    let merged = true;
+    while (merged) {
+      merged = false;
+      search: for (let a = 0; a < triangles.length; a++)
+        for (let b = 0; b < a; b++) {
+          const first = triangles[a],
+            second = triangles[b];
+          for (let i = 0; i < first.length; i++) {
+            const j = second.findIndex(
+              (id, k) =>
+                id === first[(i + 1) % first.length] &&
+                second[(k + 1) % second.length] === first[i],
+            );
+            if (j < 0) continue;
+            const left = [...first.slice(i + 1), ...first.slice(0, i + 1)],
+              right = [...second.slice(j + 1), ...second.slice(0, j + 1)],
+              combined = [...left, ...right.slice(1, -1)];
+            if (
+              new Set(combined).size !== combined.length ||
+              !combined.every(
+                (id, k) =>
+                  dot(
+                    cross(
+                      sub(
+                        vertices[combined[(k + 1) % combined.length]],
+                        vertices[id],
+                      ),
+                      sub(
+                        vertices[combined[(k + 2) % combined.length]],
+                        vertices[combined[(k + 1) % combined.length]],
+                      ),
+                    ),
+                    normal,
+                  ) >=
+                  -EPS * EPS,
+              )
+            )
+              continue;
+            triangles[b] = combined;
+            triangles.splice(a, 1);
+            merged = true;
+            break search;
+          }
+        }
+    }
+    result.push(...triangles);
+  }
+  return result;
+}
+
 /** Cancel only opposite walls connected to a cap edge; this is not a solid union. */
 export function joinExtrusion(source, result, selected) {
   const cap = source.faces[selected],
@@ -283,6 +429,19 @@ export function joinExtrusion(source, result, selected) {
     }
   });
   if (!joined) return result;
+
+  parts.forEach((pieces, origin) => {
+    parts[origin] = repartition(
+      pieces.map((face) => clean(face.map(resolve))),
+      result.vertices,
+      (id) =>
+        id >= source.vertices.length + cap.length &&
+        !inSweep(result.vertices[id]),
+    );
+  });
+  const used = new Set(parts.flat(2));
+  for (const id of candidates)
+    if (!used.has(resolve(id))) candidates.delete(id);
 
   const joinedWalls = [
       ...new Set(components.flatMap((component) => [...component])),
