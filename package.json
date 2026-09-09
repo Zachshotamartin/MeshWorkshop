@@ -16,7 +16,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "test": "node --test tests/*.test.js",
-    "test:browser": "node tests/browser-drag.mjs && node tests/browser-push-pull.mjs && node tests/browser-features.mjs && node tests/browser-collisions.mjs"
+    "test:browser": "node tests/browser-drag.mjs && node tests/browser-push-pull.mjs && node tests/browser-features.mjs && node tests/browser-collisions.mjs && node tests/browser-connected-extrusion.mjs"
   },
   "peerDependencies": {
     "three": "^0.180.0"

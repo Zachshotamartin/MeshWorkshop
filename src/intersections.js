@@ -1,4 +1,9 @@
 // Narrow-phase tests allow shared topological edges, but reject overlap beyond them.
+import {
+  extrusionJoinInfo,
+  polygonNormal,
+  triangulatePolygon,
+} from "./extrusionJoins.js";
 const EPS = 1e-7;
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
@@ -11,7 +16,7 @@ const length = (a) => Math.hypot(...a);
 const normal = (p) => {
   const n = cross(sub(p[1], p[0]), sub(p[2], p[0])),
     l = length(n);
-  return l > EPS ? n.map((v) => v / l) : null;
+  return l > EPS * EPS ? n.map((v) => v / l) : null;
 };
 const bounds = (points) => ({
   min: [0, 1, 2].map((k) => Math.min(...points.map((p) => p[k]))),
@@ -37,12 +42,26 @@ function onSegment(p, a, b) {
   );
 }
 function insideTriangle(p, points, n) {
-  return points.every((a, i) => {
-    const edge = sub(points[(i + 1) % 3], a);
-    // The cross product measures signed area, so scale the distance tolerance
-    // by edge length. Otherwise short extrusion edges acquire a much wider
-    // collision margin than the rest of the mesh.
-    return dot(cross(edge, sub(p, a)), n) >= -EPS * length(edge);
+  if (
+    points.every(
+      (a, i) => dot(cross(sub(points[(i + 1) % 3], a), sub(p, a)), n) >= 0,
+    )
+  )
+    return true;
+  // Measure the actual distance to the boundary. Expanding each half-plane
+  // separately extends acute corners farther than EPS and can report a
+  // collision against a neighboring sliver just above a joined roof.
+  return points.some((a, i) => {
+    const edge = sub(points[(i + 1) % 3], a),
+      t = Math.max(0, Math.min(1, dot(sub(p, a), edge) / dot(edge, edge)));
+    return (
+      length(
+        sub(
+          sub(p, a),
+          edge.map((v) => v * t),
+        ),
+      ) < EPS
+    );
   });
 }
 function segmentHits(a, b, points, n) {
@@ -124,10 +143,12 @@ export function trianglesConflict(a, b) {
 }
 function triangles(mesh, face) {
   const ids = mesh.faces[face],
-    out = [];
-  for (let i = 1; i < ids.length - 1; i++) {
-    const indices = [ids[0], ids[i], ids[i + 1]],
-      points = indices.map((id) => mesh.vertices[id]);
+    out = [],
+    indicesList = triangulatePolygon(mesh.vertices, ids);
+  if (indicesList.length !== ids.length - 2)
+    throw new Error("This edit would collapse a face.");
+  for (const indices of indicesList) {
+    const points = indices.map((id) => mesh.vertices[id]);
     out.push({ ids: indices, points, face, box: bounds(points) });
   }
   return out;
@@ -170,27 +191,29 @@ function sourceTree(mesh) {
   return value;
 }
 function validatePolygon(points) {
-  const n = normal(points);
+  const n = polygonNormal(points);
   if (!n) throw new Error("This edit would collapse a face.");
   if (points.some((p) => Math.abs(dot(sub(p, points[0]), n)) > EPS * 10))
     throw new Error("This edit would twist a connected face.");
   for (let i = 0; i < points.length; i++)
     if (
+      length(sub(points[(i + 1) % points.length], points[i])) <= EPS ||
       dot(
         cross(
           sub(points[(i + 1) % points.length], points[i]),
           sub(points[(i + 2) % points.length], points[(i + 1) % points.length]),
         ),
         n,
-      ) <=
-      EPS * EPS
+      ) <
+        -EPS * EPS
     )
       throw new Error("This edit would fold or collapse a face.");
 }
 /** Broad-phase tree is cached per immutable gesture source; only edited faces are tested. */
 export function assertSafeEdit(source, result, selected) {
   const changed = new Set(),
-    moved = new Set();
+    moved = new Set(),
+    join = extrusionJoinInfo(result);
   result.vertices.forEach((p, id) => {
     if (
       !source.vertices[id] ||
@@ -199,6 +222,10 @@ export function assertSafeEdit(source, result, selected) {
       moved.add(id);
   });
   result.faces.forEach((f, i) => {
+    if (join) {
+      if (!join.unchanged.has(join.origins[i])) changed.add(i);
+      return;
+    }
     if (
       !source.faces[i] ||
       f.length !== source.faces[i].length ||
@@ -218,7 +245,10 @@ export function assertSafeEdit(source, result, selected) {
       neighbors = [];
     query(spatial, a.box, neighbors);
     for (const b of neighbors)
-      if (!changed.has(b.face) && trianglesConflict(a, b))
+      if (
+        (join ? join.unchanged.has(b.face) : !changed.has(b.face)) &&
+        trianglesConflict(a, b)
+      )
         throw new Error("Blocked by another surface.");
     for (let j = 0; j < i; j++)
       if (a.face !== dynamic[j].face && trianglesConflict(a, dynamic[j]))
@@ -227,7 +257,8 @@ export function assertSafeEdit(source, result, selected) {
   // A large pull can enclose a small obstacle without leaving a surface crossing
   // at its endpoint. Test the swept cap volume as well as the final surface.
   const start = source.faces[selected]?.map((id) => source.vertices[id]),
-    end = result.faces[selected]?.map((id) => result.vertices[id]);
+    end =
+      join?.capEnd ?? result.faces[selected]?.map((id) => result.vertices[id]);
   if (start && end && start.length === end.length) {
     const center = [0, 1, 2].map(
       (k) =>
@@ -245,7 +276,7 @@ export function assertSafeEdit(source, result, selected) {
       ]),
     ]
       .map((points) => {
-        const n = normal(points);
+        const n = polygonNormal(points);
         if (!n) return null;
         const sign = dot(sub(center, points[0]), n) > 0 ? -1 : 1;
         return { p: points[0], n: n.map((v) => v * sign) };

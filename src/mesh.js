@@ -1,4 +1,6 @@
 import { recordVertexDrivers } from "./deformation.js";
+import { joinExtrusion } from "./extrusionJoins.js";
+export { editFaceIndex } from "./extrusionJoins.js";
 
 const add = (a, b) => a.map((v, i) => v + b[i]),
   sub = (a, b) => a.map((v, i) => v - b[i]),
@@ -80,7 +82,7 @@ export function extrude(mesh, index, distance = 0.5) {
     const j = (i + 1) % f.length;
     m.faces.push([f[i], f[j], start + j, start + i]);
   }
-  return m;
+  return joinExtrusion(mesh, m, index);
 }
 export function inset(mesh, index, fraction = 0.2) {
   validate(mesh, index);
