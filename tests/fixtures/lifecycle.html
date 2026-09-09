@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mesh lifecycle test fixture</title></head><body><main><header><h1>Mesh lifecycle fixture</h1></header><div id="lab"></div></main><script type="module">
+import { mountLab } from '@zachshotamartin/graphics-workbench';
+import '@zachshotamartin/graphics-workbench/style.css';
+import { createExperiment } from '../../src/index.js';
+window.fixture = mountLab(document.querySelector('#lab'), ctx => { const tool = createExperiment(ctx); window.tool = tool; return tool; });
+</script></body></html>

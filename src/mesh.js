@@ -54,6 +54,8 @@ function validate(m, face) {
 }
 export function extrude(mesh, index, distance = 0.5) {
   validate(mesh, index);
+  if (mesh.faces.length + mesh.faces[index].length > 16000)
+    throw new Error("This edit would exceed the 16,000 face limit.");
   if (!Number.isFinite(distance) || distance <= 0 || distance > 3)
     throw new Error(
       "Extrusion distance must be greater than zero and at most 3.",
@@ -72,6 +74,8 @@ export function extrude(mesh, index, distance = 0.5) {
 }
 export function inset(mesh, index, fraction = 0.2) {
   validate(mesh, index);
+  if (mesh.faces.length + mesh.faces[index].length > 16000)
+    throw new Error("This edit would exceed the 16,000 face limit.");
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 0.8)
     throw new Error("Inset fraction must be between 0 and 0.8.");
   const m = cloneMesh(mesh),
@@ -220,6 +224,8 @@ export function toOBJ(mesh) {
 }
 export function bevelFace(mesh, index, fraction = 0.2, distance = 0.25) {
   validate(mesh, index);
+  if (mesh.faces.length + mesh.faces[index].length > 16000)
+    throw new Error("This edit would exceed the 16,000 face limit.");
   if (
     !Number.isFinite(fraction) ||
     fraction <= 0 ||
@@ -252,6 +258,8 @@ export function bevelFace(mesh, index, fraction = 0.2, distance = 0.25) {
 }
 export function splitFace(mesh, index) {
   validate(mesh, index);
+  if (mesh.faces.length + 1 > 16000)
+    throw new Error("This edit would exceed the 16,000 face limit.");
   const m = cloneMesh(mesh),
     f = m.faces[index];
   if (f.length < 4)

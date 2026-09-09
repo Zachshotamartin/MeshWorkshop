@@ -1,22 +1,10 @@
 # Mesh Workshop
 
-A small real polygon modeler: face selection, connected extrusion, face insets, Catmull–Clark subdivision, undo, wireframe inspection and OBJ export. Standalone and portfolio use the same `createExperiment` module. Presets are built by the same editable topology operations, not pre-rendered pictures.
+A small polygon modeler built around **direct face dragging**. Grab a face and pull it along its normal; the preview edits real topology and releasing saves one undo step. The standalone tool and portfolio import the same `createExperiment` module.
 
-`npm test`, `npm run dev`, `npm run build`.
+[Open the portfolio demo](https://zachsm.com/experiments/mesh-workshop).
 
-Pure mesh data is `{vertices: number[][], faces: number[][]}`. `extrude`, `inset` and `subdivide` return new meshes. A cube begins with eight shared vertices and six outward-facing quads. Extrusion replaces one cap and adds its bridge faces. Inset adds a coplanar ring. Subdivision creates shared edge/face points with the Catmull–Clark interior and boundary rules.
-
-Limits: convex face insets move points toward the centroid rather than constructing constant-distance offsets. Extreme repeated extrusions may self-intersect; this is not a solid Boolean/CAD system. Subdivision rejects nonmanifold edges and more than16,000 resulting faces. Undo retains24 edits.
-
-Reference: Catmull & Clark, *Recursively generated B-spline surfaces on arbitrary topological meshes* (1978), https://doi.org/10.1016/0010-4485(78)90110-0.
-
-## Chamfers and face cuts
-
-Beveled extrusion raises a smaller cap and joins it to the original boundary with sloped shoulder faces. It uses the extrusion distance and inset fraction; it is a selected-face chamfered extrusion, not an all-edge bevel modifier. Split face diagonally connects existing nonadjacent face vertices and does not create T-junctions. Both operations preserve closed manifold topology on a valid closed input and participate in undo.
-
-## Run and explore
-
-[Open the portfolio demo](https://zachsm.com/experiments/mesh-workshop). This repository runs independently and exports the same implementation used by the portfolio.
+## Run
 
 Requires Node.js 22 or later.
 
@@ -26,16 +14,57 @@ npm test
 npm run dev
 ```
 
-`npm run build` produces a static site in `dist`. Editing, uploaded files, and exports stay in the browser. No account, server processing, or GitHub Actions is required.
+`npm run build` produces the static site in `dist`. No server processing, account, or GitHub Actions is required.
+
+## Interaction
+
+- **Drag a face:** select its nearest visible surface and pull outward along the gold normal. The floating arrow and distance readout show the gesture. Clicking without moving only selects.
+- **Face looking directly at the camera:** drag upward to pull it toward you. This avoids unstable projection when the normal has no useful screen-space direction.
+- **Shift:** snap the pull to 0.1 model units.
+- **Escape or pointer cancellation:** restore the exact pre-drag mesh. Pulling back through the start also discards the preview.
+- **Background drag or right-drag:** orbit without editing the mesh.
+- **Drag operation:** choose ordinary extrusion or a smaller raised cap with beveled shoulders.
+- **Keyboard:** use Previous/Next face, adjust Keyboard pull distance, then press Enter on the slider or viewport.
+
+Inset, diagonal face cuts, subdivision, wireframe display, 24-step undo, editable geometric presets, and OBJ export remain available. There is no button-based extrusion workflow.
+
+## How it works
+
+Pure mesh data is `{vertices: number[][], faces: number[][]}`. A cube starts with eight shared vertices and six outward-facing quads. Extrusion replaces one cap and adds connected side faces. Inset adds a coplanar ring; the bevel variant raises a smaller cap with sloped shoulders. A diagonal cut connects existing vertices without T-junctions. Catmull–Clark subdivision creates shared edge and face points using the interior and boundary rules.
+
+The drag axis is computed from the camera's homogeneous view-projection transform. The pointer's motion along the projected normal is inverted back into model distance, including perspective foreshortening. An end-on normal uses a camera-depth-scaled upward gesture. Preview geometry is rebuilt from one immutable pre-drag snapshot, not repeatedly extruded from the previous preview. Only release adds history. Front-face raycasting against the nearest solid triangle avoids selecting an occluded back face through the visible cap.
+
+The exported lifecycle hooks support cached tool switching: `deactivate()` rolls back an active drag and releases pointer capture; `activate()` restores the viewport affordances. Neither switching nor a canceled gesture commits an edit.
+
+Reference: [Catmull & Clark, *Recursively generated B-spline surfaces on arbitrary topological meshes* (1978)](https://doi.org/10.1016/0010-4485(78)90110-0).
+
+## Verification
+
+`npm test` exercises topology and camera-aware projection, including different camera scales, end-on fallback, inward-motion bounds, repeated previews and rollback.
+
+```sh
+npx playwright install chromium
+npm run test:browser
+```
+
+The browser test starts a local Vite server, performs real mouse and touch drags, downloads and compares actual OBJ geometry, verifies one-step undo, cancels gestures, checks foreground picking, orbits, exercises keyboard operation and tests deactivation. To use an already-running server:
+
+```sh
+MESH_WORKSHOP_URL=http://127.0.0.1:5341 npm run test:browser
+```
+
+## Limits
+
+Pulls are outward-only, up to 3 model units. Moves below 0.02 units do not create collapsed side walls. Edits and subdivision are bounded to 16,000 output faces. Insets and face bevels move corners toward the centroid rather than applying a constant-distance CAD offset. Extreme edits on complex forms may intersect other surfaces: this is not a collision-aware solid modeler or an all-edge bevel modifier. Subdivision rejects nonmanifold edges.
 
 ## Captured examples
 
-![Green polygon tower with stepped terraces, an extended selected roof face, and its actual wireframe edges.](examples/01.png)
+![A cube face being pulled upward, with a gold direction arrow, live distance readout and connected side faces.](examples/01.png)
 
-A terraced tower shaped with face extrusion and inset operations..
+An actual drag preview. Releasing commits the whole pull as one edit.
 
-![Rounded green vessel with a dense, continuous quad wireframe from actual Catmull–Clark subdivision.](examples/02.png)
+![A cube with a smaller raised top cap joined to its original boundary by sloped bevel shoulders.](examples/02.png)
 
-Three Catmull–Clark passes turn an extruded polygon form into a rounded vessel..
+The same direct gesture in Bevel mode creates sloped shoulder faces.
 
-Exact reproduction steps are recorded in [the example manifest](examples/manifest.json).
+[Exact reproduction steps](examples/manifest.json).
