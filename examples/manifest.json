@@ -1,0 +1,4 @@
+[
+  {"file":"01.png","caption":"A terraced tower shaped with face extrusion and inset operations.","alt":"Green polygon tower with stepped terraces, an extended selected roof face, and its actual wireframe edges.","steps":["Load Terraced tower","Extrude the selected top face by 0.55","Inset the face by 0.22","Undo the inset to compare the raised cap"]},
+  {"file":"02.png","caption":"Three Catmull–Clark passes turn an extruded polygon form into a rounded vessel.","alt":"Rounded green vessel with a dense, continuous quad wireframe from actual Catmull–Clark subdivision.","steps":["Load Rounded vessel, which applies two subdivision passes to an inset and extruded cube","Subdivide once","Reset view"]}
+]
