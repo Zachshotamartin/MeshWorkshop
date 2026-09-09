@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@zachshotamartin/graphics-workbench": "https://codeload.github.com/Zachshotamartin/GraphicsWorkbench/tar.gz/29d52d5d3c146954d4ed537cc020047333b0e642",
+    "@zachshotamartin/graphics-workbench": "https://codeload.github.com/Zachshotamartin/GraphicsWorkbench/tar.gz/94f5e8e9cced86d16c6d20e296d206712f09b979",
     "three": "^0.180.0",
     "vite": "^8.2.1"
   },
