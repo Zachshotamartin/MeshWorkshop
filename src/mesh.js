@@ -231,11 +231,11 @@ export function bevelFace(mesh, index, fraction = 0.2, distance = 0.25) {
     fraction <= 0 ||
     fraction >= 0.8 ||
     !Number.isFinite(distance) ||
-    distance <= 0 ||
+    distance < 0 ||
     distance > 3
   )
     throw Error(
-      "Use a bevel fraction between 0 and 0.8 and a positive height up to 3.",
+      "Use a bevel fraction between 0 and 0.8 and a height from 0 to 3.",
     );
   const m = cloneMesh(mesh),
     f = m.faces[index],
