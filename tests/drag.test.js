@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { makeDragAxis, dragDistance, previewExtrusion } from "../src/drag.js";
+import {
+  makeDragAxis,
+  dragDistance,
+  previewExtrusion,
+  inwardLimit,
+  bevelWidth,
+} from "../src/drag.js";
 import { cube, topology } from "../src/mesh.js";
 
 function setup(position, point, normal) {
@@ -72,7 +78,7 @@ test("inward and perpendicular drags cannot build inverted or zero-area side wal
   assert.equal(dragDistance(axis, [0, 0], [10000, 0]), 3);
   assert.equal(dragDistance(axis, [0, 0], [54, 0], { snap: true }), 0.5);
   assert.deepEqual(previewExtrusion(cube(), 5, 0.001), cube());
-  assert.throws(() => previewExtrusion(cube(), 5, -1), /outward/);
+  assert.throws(() => previewExtrusion(cube(), 5, -3), /supporting/);
 });
 test("preview updates use one source topology and rollback leaves the source unchanged", () => {
   const original = cube(),
@@ -92,4 +98,34 @@ test("preview updates use one source topology and rollback leaves the source unc
   }
   assert.deepEqual(original, expected);
   assert.deepEqual(previewExtrusion(original, 5, 0), expected);
+});
+
+test("pushing an existing extrusion shortens its cap without adding vertices or side walls", () => {
+  const raised = previewExtrusion(cube(), 5, 1.2),
+    shorter = previewExtrusion(raised, 5, -0.8);
+  assert.equal(shorter.faces.length, raised.faces.length);
+  assert.equal(shorter.vertices.length, raised.vertices.length);
+  assert.deepEqual(shorter.faces, raised.faces);
+  assert.deepEqual(shorter.vertices.slice(0, 8), raised.vertices.slice(0, 8));
+  assert.ok(
+    shorter.faces[5].every(
+      (id) => Math.abs(shorter.vertices[id][1] - 1.4) < 1e-9,
+    ),
+  );
+  assert.ok(inwardLimit(raised, 5) > -1.2);
+  const limit = previewExtrusion(raised, 5, inwardLimit(raised, 5));
+  assert.ok(limit.faces[5].every((id) => limit.vertices[id][1] > 1));
+  assert.equal(topology(shorter).boundary, 0);
+  assert.equal(topology(shorter).nonManifold, 0);
+});
+test("signed depth and perpendicular cap width are independent and bounded", () => {
+  const axis = { direction: [0, -1], pixelsPerUnit: 100, perspective: 0 };
+  assert.equal(dragDistance(axis, [0, 0], [80, 50], { minDistance: -1 }), -0.5);
+  assert.equal(dragDistance(axis, [0, 0], [0, 500], { minDistance: -1 }), -1);
+  const narrow = bevelWidth(axis, [0, 0], [80, -50], 0.22, 500),
+    wide = bevelWidth(axis, [0, 0], [-40, -50], 0.22, 500);
+  assert.ok(narrow.fraction > 0.22);
+  assert.ok(wide.fraction < 0.22);
+  assert.equal(bevelWidth(axis, [0, 0], [0, -50], 0.22, 500).fraction, 0.22);
+  assert.equal(bevelWidth(axis, [0, 0], [10000, 0], 0.22, 500).fraction, 0.78);
 });

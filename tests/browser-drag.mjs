@@ -154,7 +154,7 @@ try {
   await reset();
   start = await down();
   await page.mouse.move(start[0], start[1] - 70, { steps: 8 });
-  await page.mouse.move(start[0], start[1] + 50, { steps: 10 });
+  await page.mouse.move(start[0], start[1], { steps: 10 });
   await page.mouse.up();
   assert.equal(await exportMesh(), original);
   assert.equal(await count("undo-count"), 0);
@@ -166,7 +166,7 @@ try {
   assert.equal(await exportMesh(), original);
   assert.equal(await count("undo-count"), 0);
   results.push(
-    "Escape, pointer cancellation and pulling back through the start all restore the original mesh without undo pollution.",
+    "Escape, pointer cancellation and returning exactly to the start all restore the original mesh without undo pollution.",
   );
 
   await reset();
@@ -188,8 +188,8 @@ try {
   await page.getByLabel("Drag operation").selectOption("extrude");
   const keyboard = page.locator("input[type=range]").first();
   await keyboard.focus();
-  await page.keyboard.press("Home");
-  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
+  await keyboard.fill("0.25");
+  await keyboard.dispatchEvent("input");
   await page.keyboard.press("Enter");
   const typed = parse(await exportMesh());
   assert.equal(typed.faces.length, 10);

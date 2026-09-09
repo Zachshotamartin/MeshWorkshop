@@ -2,7 +2,6 @@ import {
   bevelFace,
   splitFace,
   cube,
-  extrude,
   inset,
   subdivide,
   faceNormal,
@@ -15,6 +14,8 @@ import {
   makeDragAxis,
   dragDistance,
   previewExtrusion,
+  inwardLimit,
+  bevelWidth,
   MIN_EXTRUSION,
 } from "./drag.js";
 
@@ -26,14 +27,14 @@ export const metadata = {
   technique:
     "Direct face manipulation, polygon topology editing and Catmull–Clark subdivision",
   instructions: [
-    "Drag a visible face outward along its gold normal to extrude it. A click only selects the face.",
+    "Grab a visible face. Pull outward to extend it; push inward to shorten it. Clicking without dragging selects the face.",
     "Hold Shift to snap the pull to 0.1 units. Escape cancels; releasing commits one undo step.",
     "Drag the background or right-drag anywhere to orbit. For a face looking straight at the camera, drag upward to pull it toward you.",
-    "Choose Extrude or Bevel for the drag operation. Inset, diagonal cuts, subdivision and OBJ export work on the resulting topology.",
+    "In Bevel mode, drag along the arrow to set height and sideways to narrow or widen the cap. Both changes undo as one gesture.",
     "Keyboard: choose Previous/Next face, adjust Keyboard pull distance, then press Enter on that slider or the viewport.",
   ],
   limitations: [
-    "Pulls are outward-only and bounded to 3 model units. Returning to the start removes the preview; inward motion does not build inverted side faces.",
+    "Pulls are bounded to 3 model units. Inward pushes move the current face and stop before the nearest supporting layer; this is not a general self-intersection solver.",
     "Face bevels and insets move vertices toward their centroid, not a constant-distance CAD offset. Extreme edits can intersect other parts of an already complex mesh.",
     "Editing and subdivision are bounded to 16,000 faces. Background and right-drag keep camera control separate from face editing.",
   ],
@@ -210,17 +211,35 @@ export function createExperiment(ctx) {
       ctx.setStatus(error.message);
     }
   }
-  function preview(source, face, distance) {
-    return operation === "bevel" && distance >= MIN_EXTRUSION
-      ? bevelFace(source, face, fraction, distance)
-      : previewExtrusion(source, face, distance);
+  function preview(
+    source,
+    face,
+    distance,
+    capFraction = fraction,
+    widthChanged = false,
+  ) {
+    if (operation !== "bevel") return previewExtrusion(source, face, distance);
+    if (Math.abs(distance) < MIN_EXTRUSION && !widthChanged)
+      return cloneMesh(source);
+    const base =
+      distance < 0 ? previewExtrusion(source, face, distance) : source;
+    return bevelFace(base, face, capFraction, Math.max(0, distance));
   }
   function keyboardPull() {
+    if (Math.abs(keyboardDistance) < MIN_EXTRUSION) return;
     apply(
       (m) =>
         operation === "bevel"
-          ? bevelFace(m, selected, fraction, keyboardDistance)
-          : extrude(m, selected, keyboardDistance),
+          ? preview(
+              m,
+              selected,
+              Math.max(inwardLimit(m, selected), keyboardDistance),
+            )
+          : previewExtrusion(
+              m,
+              selected,
+              Math.max(inwardLimit(m, selected), keyboardDistance),
+            ),
       "Selected face pulled",
     );
   }
@@ -260,8 +279,8 @@ export function createExperiment(ctx) {
       operation = value;
       ctx.setStatus(
         value === "bevel"
-          ? "Drag a face to raise a smaller cap with sloped shoulders."
-          : "Drag a face to extrude it along its normal.",
+          ? "Drag along the arrow for height; drag sideways to narrow or widen the beveled cap."
+          : "Pull a face outward to extend it, or push inward to shorten it.",
       );
     },
   );
@@ -271,7 +290,7 @@ export function createExperiment(ctx) {
   );
   ui.button("Next face", () => selectFace((selected + 1) % mesh.faces.length));
   const keyboardControl = ui.range("Keyboard pull distance", {
-    min: 0.05,
+    min: -3,
     max: 3,
     step: 0.05,
     value: keyboardDistance,
@@ -381,7 +400,18 @@ export function createExperiment(ctx) {
     arrow.style.display = "block";
     arrow.style.left = `${x - 24}px`;
     arrow.style.top = `${y - 24}px`;
-    arrow.style.transform = `rotate(${(Math.atan2(axis.direction[1], axis.direction[0]) * 180) / Math.PI + 90}deg)`;
+    const pathFor = ([dx, dy]) => {
+      const x = 24 + dx * 19,
+        y = 24 + dy * 19;
+      return `M24 24L${x} ${y}M${x - dx * 7 - dy * 5} ${y - dy * 7 + dx * 5}L${x} ${y}L${x - dx * 7 + dy * 5} ${y - dy * 7 - dx * 5}`;
+    };
+    const tangent = bevelWidth(axis, [0, 0], [0, 0], fraction, 200).tangent;
+    arrowPath.setAttribute(
+      "d",
+      pathFor(axis.direction) + (operation === "bevel" ? pathFor(tangent) : ""),
+    );
+    arrow.dataset.normal = axis.direction.join(",");
+    arrow.style.transform = "none";
   }
   function hideFeedback() {
     feedback.style.display = "none";
@@ -391,7 +421,10 @@ export function createExperiment(ctx) {
     if (!drag) return;
     const state = drag;
     drag = null;
-    const accepted = commit && state.active && state.distance >= MIN_EXTRUSION;
+    const accepted =
+      commit &&
+      state.active &&
+      (Math.abs(state.distance) >= MIN_EXTRUSION || state.widthChanged);
     if (accepted) remember(state.source, state.face);
     else mesh = state.source;
     selected = state.face;
@@ -405,12 +438,12 @@ export function createExperiment(ctx) {
       ctx.canvas.releasePointerCapture(state.pointerId);
     rebuild();
     hint.textContent = accepted
-      ? `${state.distance.toFixed(2)} units pulled. Drag the new cap again to continue, or Undo edit to restore the whole pull.`
-      : "Drag outward along the gold normal. Background or right-drag orbits.";
+      ? `${Math.abs(state.distance).toFixed(2)} units ${state.distance < 0 ? "shortened" : "extended"}${operation === "bevel" ? ` · cap ${Math.round((1 - state.fraction) * 100)}%` : ""}. Undo restores the entire gesture.`
+      : "Pull along the gold arrow to extend; push against it to shorten. Background or right-drag orbits.";
     ctx.setStatus(
       message ||
         (accepted
-          ? `Face ${selected + 1} pulled ${state.distance.toFixed(2)} units. One undo step saved.`
+          ? `Face ${selected + 1} ${state.distance < 0 ? "shortened" : "shaped"} by ${Math.abs(state.distance).toFixed(2)} units${operation === "bevel" ? ` · cap ${Math.round((1 - state.fraction) * 100)}%` : ""}. One undo step saved.`
           : `Face ${selected + 1} selected. No geometry changed.`),
     );
   }
@@ -455,6 +488,14 @@ export function createExperiment(ctx) {
           start: [event.clientX, event.clientY],
           axis,
           distance: 0,
+          minDistance: inwardLimit(mesh, selected),
+          fraction,
+          initialFraction: fraction,
+          widthChanged: false,
+          viewportSize: Math.min(
+            ctx.canvas.clientWidth,
+            ctx.canvas.clientHeight,
+          ),
           active: false,
           threshold: event.pointerType === "touch" ? 8 : 4,
           controlsEnabled,
@@ -498,11 +539,35 @@ export function createExperiment(ctx) {
           return;
         const distance = dragDistance(drag.axis, drag.start, current, {
           snap: event.shiftKey,
+          minDistance: drag.minDistance,
         });
+        const width = bevelWidth(
+          drag.axis,
+          drag.start,
+          current,
+          drag.initialFraction,
+          drag.viewportSize,
+        );
+        const capFraction =
+          operation === "bevel" ? width.fraction : drag.initialFraction;
+        const widthChanged =
+          operation === "bevel" &&
+          Math.abs(capFraction - drag.initialFraction) > 0.005;
         try {
           drag.active = true;
-          if (Math.abs(distance - drag.distance) > 1e-5) {
-            mesh = preview(drag.source, drag.face, distance);
+          if (
+            Math.abs(distance - drag.distance) > 1e-5 ||
+            Math.abs(capFraction - drag.fraction) > 1e-5
+          ) {
+            mesh = preview(
+              drag.source,
+              drag.face,
+              distance,
+              capFraction,
+              widthChanged,
+            );
+            drag.fraction = capFraction;
+            drag.widthChanged = widthChanged;
             drag.distance = distance;
             rebuild();
           }
@@ -510,11 +575,11 @@ export function createExperiment(ctx) {
           feedbackAt(
             event,
             drag.axis,
-            `${distance.toFixed(2)} units${event.shiftKey ? " · snap" : ""}`,
+            `${distance.toFixed(2)} units${operation === "bevel" ? ` · cap ${Math.round((1 - capFraction) * 100)}%` : ""}${event.shiftKey ? " · snap" : ""}`,
           );
           hint.textContent =
-            distance < MIN_EXTRUSION
-              ? "Pull outward to add geometry. Release here to keep the original face."
+            Math.abs(distance) < MIN_EXTRUSION && !widthChanged
+              ? "Pull to extend, push to shorten. In Bevel, drag sideways to change cap width."
               : `${distance.toFixed(2)} units · release to keep · Escape to cancel`;
           ctx.invalidate();
         } catch (error) {

@@ -18,12 +18,12 @@ npm run dev
 
 ## Interaction
 
-- **Drag a face:** select its nearest visible surface and pull outward along the gold normal. The floating arrow and distance readout show the gesture. Clicking without moving only selects.
+- **Drag a face:** select its nearest visible surface, pull outward to extend it, or push inward to shorten the existing face. The floating arrow and distance readout show the gesture. Clicking without moving only selects.
 - **Face looking directly at the camera:** drag upward to pull it toward you. This avoids unstable projection when the normal has no useful screen-space direction.
 - **Shift:** snap the pull to 0.1 model units.
 - **Escape or pointer cancellation:** restore the exact pre-drag mesh. Pulling back through the start also discards the preview.
 - **Background drag or right-drag:** orbit without editing the mesh.
-- **Drag operation:** choose ordinary extrusion or a smaller raised cap with beveled shoulders.
+- **Drag operation:** choose extrusion or bevel. In bevel mode, drag along the arrow for height and across it to narrow or widen the cap.
 - **Keyboard:** use Previous/Next face, adjust Keyboard pull distance, then press Enter on the slider or viewport.
 
 Inset, diagonal face cuts, subdivision, wireframe display, 24-step undo, editable geometric presets, and OBJ export remain available. There is no button-based extrusion workflow.
@@ -55,7 +55,7 @@ MESH_WORKSHOP_URL=http://127.0.0.1:5341 npm run test:browser
 
 ## Limits
 
-Pulls are outward-only, up to 3 model units. Moves below 0.02 units do not create collapsed side walls. Edits and subdivision are bounded to 16,000 output faces. Insets and face bevels move corners toward the centroid rather than applying a constant-distance CAD offset. Extreme edits on complex forms may intersect other surfaces: this is not a collision-aware solid modeler or an all-edge bevel modifier. Subdivision rejects nonmanifold edges.
+Outward pulls add connected geometry up to 3 model units. Inward pushes move the current face vertices without adding inverted side walls, bounded by the nearest supporting layer. Moves below 0.002 units are treated as unchanged. Bevel height and cap width respond to orthogonal mouse directions within one undo transaction. Edits and subdivision are bounded to 16,000 output faces. Insets and face bevels move corners toward the centroid rather than applying a constant-distance CAD offset. Extreme edits on complex forms may intersect other surfaces: this is not a collision-aware solid modeler or an all-edge bevel modifier. Subdivision rejects nonmanifold edges.
 
 ## Captured examples
 
