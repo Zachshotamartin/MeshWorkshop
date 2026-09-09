@@ -23,7 +23,7 @@
   "devDependencies": {
     "three": "^0.180.0",
     "vite": "^8.2.1",
-    "@zachshotamartin/graphics-workbench": "https://codeload.github.com/Zachshotamartin/GraphicsWorkbench/tar.gz/6151d1bc633846075f9b95e52f2f22657c2e0f7c"
+    "@zachshotamartin/graphics-workbench": "https://codeload.github.com/Zachshotamartin/GraphicsWorkbench/tar.gz/c598cbffb04d94d56b65567bc25dfa3e47c080d0"
   },
   "license": "MIT",
   "engines": {
