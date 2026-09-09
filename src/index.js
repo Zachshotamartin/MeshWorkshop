@@ -1,5 +1,6 @@
 import { createFeatureEditing } from "./featureEditing.js";
 import { assertSafeEdit, constrainEdit } from "./intersections.js";
+import { triangulatePolygon } from "./extrusionJoins.js";
 import {
   bevelFace,
   splitFace,
@@ -11,6 +12,7 @@ import {
   topology,
   toOBJ,
   cloneMesh,
+  editFaceIndex,
 } from "./mesh.js";
 import {
   makeDragAxis,
@@ -37,7 +39,7 @@ export const metadata = {
     "Keyboard: choose Previous/Next face, adjust Keyboard pull distance, then press Enter on that slider or the viewport.",
   ],
   limitations: [
-    "Pulls are bounded to 3 model units. Edits stop at intersecting surfaces; inward pushes also stop when another extrusion depends on the selected face. Separate those edits with Undo before shortening their parent.",
+    "Pulls are bounded to 3 model units. A face can move alongside touching parallel walls; geometry in its path stops the pull. Inward pushes also stop when another extrusion depends on the selected face. Separate those edits with Undo before shortening their parent.",
     "Face bevels and insets move corners toward their centroid rather than using a CAD offset. Twisted or collapsed polygons are rejected. Subdivided nonplanar faces may need to be split into triangles before editing.",
     "Editing and subdivision are bounded to 16,000 faces. Background and right-drag keep camera control separate from face editing.",
   ],
@@ -139,8 +141,8 @@ export function createExperiment(ctx) {
       colors = [];
     triangles = [];
     mesh.faces.forEach((f, fi) => {
-      for (let i = 1; i < f.length - 1; i++) {
-        for (const id of [f[0], f[i], f[i + 1]]) {
+      for (const triangle of triangulatePolygon(mesh.vertices, f)) {
+        for (const id of triangle) {
           positions.push(...mesh.vertices[id]);
           colors.push(1, 1, 1);
         }
@@ -228,7 +230,7 @@ export function createExperiment(ctx) {
       if (checkIntersections) assertSafeEdit(mesh, next, selected);
       remember(mesh, selected);
       mesh = next;
-      selected = Math.min(selected, mesh.faces.length - 1);
+      selected = Math.min(editFaceIndex(next, selected), mesh.faces.length - 1);
       hovered = -1;
       rebuild();
       ctx.setStatus(
@@ -471,7 +473,7 @@ export function createExperiment(ctx) {
       (Math.abs(state.distance) >= MIN_EXTRUSION || state.widthChanged);
     if (accepted) remember(state.source, state.face);
     else mesh = state.source;
-    selected = state.face;
+    selected = accepted ? editFaceIndex(mesh, state.face) : state.face;
     hovered = -1;
     ctx.controls.enabled = state.controlsEnabled;
     ctx.controls.enableDamping = state.damping;
@@ -646,6 +648,7 @@ export function createExperiment(ctx) {
               [distance, capFraction],
             );
             mesh = limited.mesh;
+            selected = editFaceIndex(mesh, drag.face);
             drag.fraction = limited.values[1];
             drag.widthChanged =
               operation === "bevel" &&

@@ -21,6 +21,8 @@ npm run dev
 - **Selection:** switch between Faces, Edges, and Vertices. Edge mode uses thick outlines; vertex mode uses round corner handles. Hover highlights a target, and clicking selects it in gold without highlighting the old face. Other visible handles remain available for the next selection.
 - **Edge and vertex bevel:** drag a selected handle right to cut inward, or left to reduce the preview. A small click movement does not start a cut. Hidden handles cannot be picked through the mesh. Previous/Next feature and Enter on the bevel-depth slider provide a keyboard alternative.
 - **Drag a face:** select its nearest visible surface, pull outward to extend it, or push inward to shorten the existing face. The floating arrow and distance readout show the gesture. Clicking without moving only selects.
+- **Touching parallel walls:** a face can rise alongside connected neighboring walls, including the lower face between two raised blocks. The walls join as the face passes them; only geometry obstructing the pull stops it.
+- **Edge and corner contact:** a face can pass a neighboring corner without treating contact as penetration, and can be shortened afterward. Raising a lower face between perpendicular walls joins their shared corner while keeping untouched surfaces separate.
 - **Face looking directly at the camera:** drag upward to pull it toward you. This avoids unstable projection when the normal has no useful screen-space direction.
 - **Shift:** snap the pull to 0.1 model units.
 - **Escape or pointer cancellation:** restore the exact pre-drag mesh. Pulling back through the start also discards the preview.
@@ -34,6 +36,10 @@ Inset, diagonal face cuts, subdivision, wireframe display, 24-step undo, editabl
 
 Pure mesh data is `{vertices: number[][], faces: number[][]}`. A cube starts with eight shared vertices and six outward-facing quads. Extrusion replaces one cap and adds connected side faces. Inset adds a coplanar ring; the bevel variant raises a smaller cap with sloped shoulders. A diagonal cut connects existing vertices without T-junctions. Catmull–Clark subdivision creates shared edge and face points using the interior and boundary rules.
 
+When new side walls coincide with connected, opposite-facing walls, planar clipping removes the internal overlap from both sides. Shared cut vertices are welded and incident edges split, preserving a closed surface through neighboring roof heights. This follows connected coplanar wall components of any size; it does not union disconnected solids. Face provenance keeps collision checks and the selected cap correct after removed walls change the face indices.
+
+For lateral edge and point contacts, obstacle triangles are clipped against the extrusion prism. A contact is allowed only when the entire clipped region lies on a lateral boundary; triangles crossing the footprint, cap-interior contacts, and overlapping face areas still block. Shortening checks the full height of the connected side walls, so existing tangencies below the cap do not falsely stop an inward gesture. Branch-dependency and minimum-height limits still apply.
+
 The drag axis is computed from the camera's homogeneous view-projection transform. The pointer's motion along the projected normal is inverted back into model distance, including perspective foreshortening. An end-on normal uses a camera-depth-scaled upward gesture. Preview geometry is rebuilt from one immutable pre-drag snapshot, not repeatedly extruded from the previous preview. Only release adds history. Front-face raycasting against the nearest solid triangle avoids selecting an occluded back face through the visible cap.
 
 The exported lifecycle hooks support cached tool switching: `deactivate()` rolls back an active drag and releases pointer capture; `activate()` restores the viewport affordances. Neither switching nor a canceled gesture commits an edit.
@@ -43,6 +49,8 @@ Reference: [Catmull & Clark, *Recursively generated B-spline surfaces on arbitra
 ## Verification
 
 `npm test` exercises topology and camera-aware projection, including different camera scales, end-on fallback, inward-motion bounds, repeated previews and rollback.
+
+Connected-extrusion regressions cover one and two touching walls, twenty wall sections, rotated meshes, perpendicular wall corners, edge-only and point-only tangency, repeated joins, exact roof heights, and real obstacles. The browser suite pulls these faces with actual pointer gestures, shortens a corner-grazing extrusion, checks exported volume and closed topology, and compares exact undo results.
 
 ```sh
 npx playwright install chromium
