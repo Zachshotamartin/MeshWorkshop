@@ -55,7 +55,9 @@ MESH_WORKSHOP_URL=http://127.0.0.1:5341 npm run test:browser
 
 ## Limits
 
-Outward pulls add connected geometry up to 3 model units. Inward pushes move the current face vertices without adding inverted side walls, bounded by the nearest supporting layer. Moves below 0.002 units are treated as unchanged. Bevel height and cap width respond to orthogonal mouse directions within one undo transaction. Edits and subdivision are bounded to 16,000 output faces. Insets and face bevels move corners toward the centroid rather than applying a constant-distance CAD offset. Extreme edits on complex forms may intersect other surfaces: this is not a collision-aware solid modeler or an all-edge bevel modifier. Subdivision rejects nonmanifold edges.
+Choose Faces, Edges, or Vertices with the selection control. Edge and vertex modes make a single planar inward chamfer: click a visible edge or corner and drag right to increase the cut, left to reduce it. The remaining surface stays closed. Convex, manifold features are supported; flat and concave features report why they cannot be cut.
+
+Outward pulls add connected geometry up to 3 model units. Inward pushes move the current face vertices without adding inverted side walls, bounded by the nearest supporting layer. Moves below 0.002 units are treated as unchanged. Bevel height and cap width respond to orthogonal mouse directions within one undo transaction. Edits and subdivision are bounded to 16,000 output faces. Insets and face bevels move corners toward the centroid rather than applying a constant-distance CAD offset. Inward edits are blocked when an attached extrusion depends on the selected corners. Extrusions, face bevels, insets, edge bevels, and vertex bevels check changed polygons and triangle intersections against a cached spatial tree, including coplanar overlap and enclosed obstacles in the swept cap volume. Dragging clamps to the last valid position. Twisted, collapsed, and intersecting faces are rejected. This is a bounded polygon modeler with numerical tolerances, not a Boolean CAD kernel or rounded multi-segment bevel modifier. Subdivision rejects nonmanifold edges.
 
 ## Captured examples
 
@@ -68,3 +70,7 @@ An actual drag preview. Releasing commits the whole pull as one edit.
 The same direct gesture in Bevel mode creates sloped shoulder faces.
 
 [Exact reproduction steps](examples/manifest.json).
+
+## Geometry references
+
+[Blender bevel manual](https://docs.blender.org/manual/en/3.0/modeling/meshes/editing/edge/bevel.html) describes edge versus vertex selection, inward chamfer geometry, and overlap clamping. This implementation uses a local clipping plane at a convex selected feature, shares cut vertices between neighboring polygons, and closes the exposed loop with a consistently oriented cap. Edge selection requires two incident faces; vertex selection uses the incident face normals.

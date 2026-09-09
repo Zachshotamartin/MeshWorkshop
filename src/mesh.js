@@ -1,3 +1,5 @@
+import { recordVertexDrivers } from "./deformation.js";
+
 const add = (a, b) => a.map((v, i) => v + b[i]),
   sub = (a, b) => a.map((v, i) => v - b[i]),
   mul = (a, s) => a.map((v) => v * s),
@@ -5,6 +7,13 @@ const add = (a, b) => a.map((v, i) => v + b[i]),
 export const cloneMesh = (m) => ({
   vertices: m.vertices.map((p) => [...p]),
   faces: m.faces.map((f) => [...f]),
+  ...(m.vertexDrivers
+    ? {
+        vertexDrivers: m.vertexDrivers.map(
+          (drivers) => drivers?.map((pair) => [...pair]) || null,
+        ),
+      }
+    : {}),
 });
 export function faceNormal(mesh, face) {
   const n = [0, 0, 0];
@@ -65,6 +74,7 @@ export function extrude(mesh, index, distance = 0.5) {
     n = faceNormal(m, f),
     start = m.vertices.length;
   for (const i of f) m.vertices.push(add(m.vertices[i], mul(n, distance)));
+  recordVertexDrivers(m, f, start, 0);
   m.faces[index] = f.map((_, i) => start + i);
   for (let i = 0; i < f.length; i++) {
     const j = (i + 1) % f.length;
@@ -86,6 +96,7 @@ export function inset(mesh, index, fraction = 0.2) {
     m.vertices.push(
       add(m.vertices[i], mul(sub(center, m.vertices[i]), fraction)),
     );
+  recordVertexDrivers(m, f, start, fraction);
   m.faces[index] = f.map((_, i) => start + i);
   for (let i = 0; i < f.length; i++) {
     const j = (i + 1) % f.length;
@@ -174,6 +185,7 @@ export function subdivide(mesh) {
   return { vertices, faces };
 }
 export function topology(mesh) {
+  const activeVertices = new Set(mesh.faces.flat());
   const edges = new Map();
   for (const f of mesh.faces)
     for (let i = 0; i < f.length; i++) {
@@ -181,12 +193,12 @@ export function topology(mesh) {
       edges.set(k, (edges.get(k) || 0) + 1);
     }
   return {
-    vertices: mesh.vertices.length,
+    vertices: activeVertices.size,
     faces: mesh.faces.length,
     edges: edges.size,
     boundary: [...edges.values()].filter((n) => n === 1).length,
     nonManifold: [...edges.values()].filter((n) => n > 2).length,
-    euler: mesh.vertices.length - edges.size + mesh.faces.length,
+    euler: activeVertices.size - edges.size + mesh.faces.length,
   };
 }
 export function preset(name) {
@@ -214,14 +226,21 @@ export function preset(name) {
   return m;
 }
 export function toOBJ(mesh) {
+  const used = [...new Set(mesh.faces.flat())].sort((a, b) => a - b),
+    indices = new Map(used.map((id, i) => [id, i + 1]));
   return (
     [
       "# Mesh Workshop — editable polygon mesh",
-      ...mesh.vertices.map((p) => "v " + p.map((v) => v.toFixed(6)).join(" ")),
-      ...mesh.faces.map((f) => "f " + f.map((i) => i + 1).join(" ")),
+      ...used.map(
+        (id) => "v " + mesh.vertices[id].map((v) => v.toFixed(6)).join(" "),
+      ),
+      ...mesh.faces.map(
+        (face) => "f " + face.map((id) => indices.get(id)).join(" "),
+      ),
     ].join("\n") + "\n"
   );
 }
+
 export function bevelFace(mesh, index, fraction = 0.2, distance = 0.25) {
   validate(mesh, index);
   if (mesh.faces.length + mesh.faces[index].length > 16000)
@@ -249,6 +268,7 @@ export function bevelFace(mesh, index, fraction = 0.2, distance = 0.25) {
         mul(normal, distance),
       ),
     );
+  recordVertexDrivers(m, f, start, fraction);
   m.faces[index] = f.map((_, i) => start + i);
   for (let i = 0; i < f.length; i++) {
     const j = (i + 1) % f.length;
