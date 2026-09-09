@@ -1,5 +1,6 @@
 import { faceMovementWeights } from "./deformation.js";
 import { cloneMesh, extrude, faceNormal } from "./mesh.js";
+import { recordShorteningSweep } from "./extrusionContacts.js";
 
 const EPSILON = 1e-8;
 export const MAX_EXTRUSION = 3;
@@ -90,6 +91,11 @@ export function inwardLimit(mesh, face) {
   )
     return 0;
   const dot = (a, b) => a.reduce((sum, value, i) => sum + value * b[i], 0);
+  // A cap at a joined roof height shares vertices with another roof. Moving
+  // them downward would deform that roof rather than shorten only this cap.
+  if (mesh.faces.some((polygon, index) => index !== face &&
+      polygon.some((id) => selected.has(id)) &&
+      dot(faceNormal(mesh, polygon), normal) > 1 - 1e-7)) return 0;
   for (const polygon of mesh.faces)
     for (let edge = 0; edge < polygon.length; edge++) {
       const a = polygon[edge],
@@ -134,7 +140,7 @@ export function previewExtrusion(source, face, distance) {
     result.vertices[id] = result.vertices[id].map(
       (v, i) => v + normal[i] * distance,
     );
-  return result;
+  return recordShorteningSweep(source, result, face, normal);
 }
 
 /** The perpendicular gesture adjusts cap width without changing normal depth. */

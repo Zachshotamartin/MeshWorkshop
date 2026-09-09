@@ -70,6 +70,31 @@ export const extrusionJoinInfo = (mesh) => edits.get(mesh);
 export const editFaceIndex = (mesh, fallback) =>
   edits.get(mesh)?.selected ?? fallback;
 
+function overlapsArea(points, clip, normal) {
+  let polygon = points;
+  for (let i = 0; i < clip.length && polygon.length; i++) {
+    const origin = clip[i],
+      edge = sub(clip[(i + 1) % clip.length], origin),
+      raw = cross(normal, edge),
+      size = length(raw),
+      inward = raw.map((v) => v / size),
+      next = [];
+    for (let j = 0; j < polygon.length; j++) {
+      const a = polygon[j],
+        b = polygon[(j + 1) % polygon.length],
+        da = dot(sub(a, origin), inward),
+        db = dot(sub(b, origin), inward);
+      if (da >= -EPS) next.push(a);
+      if ((da > EPS && db < -EPS) || (da < -EPS && db > EPS)) {
+        const t = da / (da - db);
+        next.push(a.map((v, k) => v + (b[k] - v) * t));
+      }
+    }
+    polygon = next;
+  }
+  return polygonNormal(polygon) !== null;
+}
+
 /** Cancel only opposite walls connected to a cap edge; this is not a solid union. */
 export function joinExtrusion(source, result, selected) {
   const cap = source.faces[selected],
@@ -111,20 +136,62 @@ export function joinExtrusion(source, result, selected) {
             pending.push(neighbor);
       });
     }
-    return found;
+    // A connected coplanar component can continue around the corner into a
+    // wall that only grazes this extrusion. Such a wall must not contribute
+    // weld targets, even though traversal through it is allowed.
+    return new Set(
+      [...found].filter((face) =>
+        overlapsArea(
+          points,
+          source.faces[face].map((id) => source.vertices[id]),
+          normals[face],
+        ),
+      ),
+    );
   });
   if (components.every((component) => !component.size)) return result;
 
   const candidates = new Set(cap),
     aliases = new Map(),
     parts = result.faces.map((face) => [face]),
-    capEnd = result.faces[selected].map((id) => [...result.vertices[id]]);
+    capEnd = result.faces[selected].map((id) => [...result.vertices[id]]),
+    sweepNormal = polygonNormal(cap.map((id) => source.vertices[id])),
+    sweepStart = dot(source.vertices[cap[0]], sweepNormal),
+    sweepEnd = dot(capEnd[0], sweepNormal);
   for (const component of components)
     for (const face of component)
       for (const id of source.faces[face]) candidates.add(id);
+  const inSweep = (point) => {
+    const level = dot(point, sweepNormal);
+    return (
+      level >= sweepStart - EPS &&
+      level <= sweepEnd + EPS &&
+      cap.every((id, i) => {
+        const origin = source.vertices[id],
+          edge = sub(source.vertices[cap[(i + 1) % cap.length]], origin);
+        return (
+          dot(cross(edge, sub(point, origin)), sweepNormal) >=
+          -EPS * length(edge)
+        );
+      })
+    );
+  };
+  // Distinct diagonal sheets stay separate until an actual wall fill connects
+  // their corner. At equal roof heights, that fill must also join both existing
+  // endpoint IDs, rather than choosing only one for the new cap.
+  const representatives = [];
+  for (const id of candidates) {
+    if (!inSweep(result.vertices[id])) continue;
+    const match = representatives.find(
+      (other) => length(sub(result.vertices[id], result.vertices[other])) < EPS,
+    );
+    if (match === undefined) representatives.push(id);
+    else aliases.set(id, match);
+  }
+  const resolve = (id) => aliases.get(id) ?? id;
   function vertex(point, drivers) {
     for (const id of candidates)
-      if (length(sub(result.vertices[id], point)) < EPS) return id;
+      if (length(sub(result.vertices[id], point)) < EPS) return resolve(id);
     const id = result.vertices.length;
     result.vertices.push(point);
     result.vertexDrivers.push(drivers);
@@ -137,7 +204,7 @@ export function joinExtrusion(source, result, selected) {
         length(sub(result.vertices[candidate], result.vertices[id])) < EPS,
     );
     if (match === undefined) candidates.add(id);
-    else aliases.set(id, match);
+    else aliases.set(id, resolve(match));
   }
   const clean = (ids) =>
     ids.filter((id, i) => id !== ids[(i + ids.length - 1) % ids.length]);
@@ -217,8 +284,33 @@ export function joinExtrusion(source, result, selected) {
   });
   if (!joined) return result;
 
-  const resolve = (id) => aliases.get(id) ?? id;
-  const splitBoundary = (face) =>
+  const joinedWalls = [
+      ...new Set(components.flatMap((component) => [...component])),
+    ],
+    wallContact = new Map();
+  function onJoinedWall(id) {
+    if (!wallContact.has(id)) {
+      const point = result.vertices[id];
+      wallContact.set(
+        id,
+        joinedWalls.some((index) => {
+          const face = source.faces[index],
+            n = normals[index],
+            origin = source.vertices[face[0]];
+          return (
+            Math.abs(dot(sub(point, origin), n)) < EPS &&
+            face.every((a, i) => {
+              const p = source.vertices[a],
+                edge = sub(source.vertices[face[(i + 1) % face.length]], p);
+              return dot(cross(edge, sub(point, p)), n) >= -EPS * length(edge);
+            })
+          );
+        }),
+      );
+    }
+    return wallContact.get(id);
+  }
+  const splitBoundary = (face, origin) =>
     face.flatMap((raw, i) => {
       const a = resolve(raw),
         b = resolve(face[(i + 1) % face.length]),
@@ -229,6 +321,18 @@ export function joinExtrusion(source, result, selected) {
       for (const candidate of candidates) {
         const id = resolve(candidate);
         if (id === a || id === b) continue;
+        // Conform existing sheets only where an old wall is actually joined.
+        // A new cap corner above those walls can lie on a taller diagonal
+        // sheet's edge; splitting that untouched edge would weld four faces.
+        if (origin < sideStart && origin !== selected && !onJoinedWall(id))
+          continue;
+        if (id < source.vertices.length) {
+          const level = dot(result.vertices[id], sweepNormal);
+          // Existing corner sheets can touch above this fill. Propagating a
+          // taller wall's corner there would weld two untouched edges into
+          // one nonmanifold edge with four incident faces.
+          if (level < sweepStart - EPS || level > sweepEnd + EPS) continue;
+        }
         const delta = sub(result.vertices[id], pa),
           t = dot(delta, edge) / size;
         if (t * Math.sqrt(size) <= EPS || (1 - t) * Math.sqrt(size) <= EPS)
@@ -247,7 +351,10 @@ export function joinExtrusion(source, result, selected) {
       return [a, ...new Set(cuts.map(([, id]) => id))];
     });
   const entries = parts.flatMap((pieces, origin) =>
-      pieces.map((face) => ({ origin, face: clean(splitBoundary(face)) })),
+      pieces.map((face) => ({
+        origin,
+        face: clean(splitBoundary(face, origin)),
+      })),
     ),
     selectedEntry = entries.find((entry) => entry.origin === selected),
     slot = Math.min(selected, entries.length - 1);

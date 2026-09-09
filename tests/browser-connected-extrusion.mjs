@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 import { topology } from "../src/mesh.js";
-import { connectedChannel, signedVolume } from "./fixtures/connected-channel.js";
+import { connectedChannel, diagonalCorner, perpendicularCorner, lastCorner, signedVolume } from "./fixtures/connected-channel.js";
 
 const server = await createServer({
   server: { host: "127.0.0.1", port: 0 },
@@ -33,8 +33,16 @@ try {
     ["one touching wall", { left: false }],
     ["middle of two raised blocks", {}],
     ["twenty wall sections", { wallSegments: 20 }],
-  ].flatMap(([name, options]) => ["roof heights", "successive joins"].map(scenario => [name, options, scenario]))) {
-    const { mesh: source, face, capArea } = connectedChannel(options);
+    ["diagonal edge contact", { diagonal: true }],
+    ["first perpendicular corner", { cornerFace: 7 }],
+    ["opposite perpendicular corner", { cornerFace: 12 }],
+    ["last remaining corner at matching roof height", { lastCorner: true }],
+  ].flatMap(([name, options]) => (options.diagonal
+    ? ["roof heights", "successive joins", "shorten after corner contact"]
+    : ["roof heights", "successive joins"]).map(scenario => [name, options, scenario]))) {
+    const { mesh: source, face, capArea } = options.diagonal ? diagonalCorner()
+      : options.cornerFace ? perpendicularCorner(options.cornerFace)
+      : options.lastCorner ? lastCorner() : connectedChannel(options);
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(mesh => { window.channelSource = mesh; }, source);
@@ -42,16 +50,16 @@ try {
     await page.waitForFunction(() => window.fixture);
     const canvas = page.locator(".graphics-workbench__viewport canvas");
     const center = [0, 1, 2].map(k => source.faces[face].reduce((sum, id) => sum + source.vertices[id][k], 0) / 4);
-    await page.evaluate(center => {
+    await page.evaluate(({ center, elevation }) => {
       const { camera, controls } = window.fixture.ctx;
       controls.target.set(...center);
-      camera.position.set(center[0], center[1] + 5, center[2] + 7);
+      camera.position.set(center[0], center[1] + elevation, center[2] + 7);
       camera.lookAt(...center);
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
       controls.update();
       window.fixture.ctx.invalidate();
-    }, center);
+    }, { center, elevation: options.cornerFace || options.lastCorner ? 10 : 5 });
     await canvas.scrollIntoViewIfNeeded();
     async function downloadMesh() {
       const download = page.waitForEvent("download");
@@ -78,7 +86,7 @@ try {
     }
     if (scenario === "roof heights") {
       // Below both neighbors, level with each roof, and above both roofs.
-      for (const depth of [0.3, 0.5, 0.85, 1.1]) {
+      for (const depth of options.diagonal ? [0.2, 0.8, 1.1] : [0.3, 0.5, 0.85, 1.1]) {
         await drag(depth);
         const mesh = parseOBJ(await downloadMesh()), stats = topology(mesh);
         assert.equal(stats.boundary, 0, `${name}: no open seams at ${depth}`);
@@ -91,6 +99,19 @@ try {
       }
       await drag(0.3, true);
       assert.equal(await downloadMesh(), original, `${name}: Escape restores source`);
+    } else if (scenario === "shorten after corner contact") {
+      await drag(0.5);
+      const raised = await downloadMesh();
+      await drag(-0.2, false, 0.5);
+      const shorter = parseOBJ(await downloadMesh());
+      assert.equal(topology(shorter).boundary, 0);
+      assert.equal(topology(shorter).nonManifold, 0);
+      assert.ok(Math.abs(signedVolume(shorter) - signedVolume(source) - capArea * 0.3) < 0.00001);
+      assert.equal(await canvas.getAttribute("data-undo-count"), "2");
+      await page.getByRole("button", { name: "Undo edit", exact: true }).click();
+      assert.equal(await downloadMesh(), raised, `${name}: undo shortening`);
+      await page.getByRole("button", { name: "Undo edit", exact: true }).click();
+      assert.equal(await downloadMesh(), original, `${name}: undo corner contact`);
     } else {
       await drag(0.3);
       const firstJoin = await downloadMesh();

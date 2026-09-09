@@ -4,6 +4,7 @@ import {
   polygonNormal,
   triangulatePolygon,
 } from "./extrusionJoins.js";
+import { extrusionContactTest } from "./extrusionContacts.js";
 const EPS = 1e-7;
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
@@ -111,7 +112,7 @@ function coplanarOverlap(a, b, n) {
   }
   return Math.abs(area) > EPS * EPS * 10;
 }
-export function trianglesConflict(a, b) {
+export function trianglesConflict(a, b, allowContact) {
   if (!overlaps(a.box, b.box)) return false;
   const na = normal(a.points),
     nb = normal(b.points);
@@ -121,7 +122,8 @@ export function trianglesConflict(a, b) {
     .map((id) => a.points[a.ids.indexOf(id)]);
   const allowed = (p) =>
     shared.some((v) => length(sub(p, v)) < EPS) ||
-    (shared.length >= 2 && onSegment(p, shared[0], shared[1]));
+    (shared.length >= 2 && onSegment(p, shared[0], shared[1])) ||
+    allowContact?.(p);
   const coplanar =
     length(cross(na, nb)) < EPS &&
     Math.abs(dot(sub(a.points[0], b.points[0]), nb)) < EPS;
@@ -213,7 +215,8 @@ function validatePolygon(points) {
 export function assertSafeEdit(source, result, selected) {
   const changed = new Set(),
     moved = new Set(),
-    join = extrusionJoinInfo(result);
+    join = extrusionJoinInfo(result),
+    tangentContact = extrusionContactTest(source, result, selected);
   result.vertices.forEach((p, id) => {
     if (
       !source.vertices[id] ||
@@ -247,12 +250,20 @@ export function assertSafeEdit(source, result, selected) {
     for (const b of neighbors)
       if (
         (join ? join.unchanged.has(b.face) : !changed.has(b.face)) &&
-        trianglesConflict(a, b)
+        trianglesConflict(a, b, tangentContact?.(b))
       )
         throw new Error("Blocked by another surface.");
-    for (let j = 0; j < i; j++)
-      if (a.face !== dynamic[j].face && trianglesConflict(a, dynamic[j]))
+    for (let j = 0; j < i; j++) {
+      const b = dynamic[j],
+        originA = join?.origins[a.face] ?? a.face,
+        originB = join?.origins[b.face] ?? b.face,
+        sourceA = originA !== selected && originA < source.faces.length,
+        sourceB = originB !== selected && originB < source.faces.length,
+        contact = sourceB ? tangentContact?.(b)
+          : sourceA ? tangentContact?.(a) : null;
+      if (a.face !== b.face && trianglesConflict(a, b, contact))
         throw new Error("This edit would intersect a connected face.");
+    }
   }
   // A large pull can enclose a small obstacle without leaving a surface crossing
   // at its endpoint. Test the swept cap volume as well as the final surface.
