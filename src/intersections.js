@@ -37,9 +37,13 @@ function onSegment(p, a, b) {
   );
 }
 function insideTriangle(p, points, n) {
-  return points.every(
-    (a, i) => dot(cross(sub(points[(i + 1) % 3], a), sub(p, a)), n) >= -EPS,
-  );
+  return points.every((a, i) => {
+    const edge = sub(points[(i + 1) % 3], a);
+    // The cross product measures signed area, so scale the distance tolerance
+    // by edge length. Otherwise short extrusion edges acquire a much wider
+    // collision margin than the rest of the mesh.
+    return dot(cross(edge, sub(p, a)), n) >= -EPS * length(edge);
+  });
 }
 function segmentHits(a, b, points, n) {
   const da = dot(sub(a, points[0]), n),
