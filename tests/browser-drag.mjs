@@ -85,9 +85,18 @@ const parse = (text) => ({
 });
 async function screenshot(name) {
   await fs.mkdir(path.join(repo, "examples"), { recursive: true });
-  await page
-    .locator(".graphics-workbench__viewport")
-    .screenshot({ path: path.join(repo, "examples", name) });
+  const rect = await page.locator(".graphics-workbench__viewport").boundingBox();
+  // Capture only whole pixels inside the viewport. Rounding its fractional
+  // bounds outward includes a row of the surrounding panel's border.
+  const x = Math.ceil(rect.x), y = Math.ceil(rect.y);
+  await page.screenshot({
+    path: path.join(repo, "examples", name),
+    clip: {
+      x, y,
+      width: Math.floor(rect.x + rect.width) - x,
+      height: Math.floor(rect.y + rect.height) - y,
+    },
+  });
 }
 try {
   await page.goto(baseURL);
