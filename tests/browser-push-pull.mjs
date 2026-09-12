@@ -43,7 +43,7 @@ try {
         a.map((v, i) => v + mesh.vertices[id - 1][i] / mesh.faces[5].length),
       [0, 0, 0],
     );
-  async function drag(mesh, depth, side = 0) {
+  async function drag(mesh, depth, side = 0, reverseDepth = null) {
     await canvas.scrollIntoViewIfNeeded();
     const start = await page.evaluate((world) => {
       const { THREE: T, camera, canvas } = window.fixture.ctx;
@@ -72,6 +72,8 @@ try {
         start[1] + n[1] * depth + t[1] * side,
         { steps: 12 },
       );
+    if (reverseDepth !== null)
+      await page.mouse.move(start[0] + n[0] * reverseDepth, start[1] + n[1] * reverseDepth, { steps: 16 });
     await page.mouse.up();
     return dump();
   }
@@ -87,6 +89,14 @@ try {
   assert.deepEqual(shortened.vertices.slice(0, 8), raised.vertices.slice(0, 8));
   await button("Undo edit").click();
   assert.equal((await dump()).text, raised.text);
+  await page.getByLabel("Drag operation").selectOption("bevel");
+  const reversedBevel = await drag(raised, 65, 0, -100);
+  assert.equal(reversedBevel.text, raised.text, "Reversing a bevel must preserve the earlier extrusion");
+  await page.getByLabel("Keyboard pull distance", { exact: true }).fill("-0.6");
+  await canvas.press("Enter");
+  assert.equal((await dump()).text, raised.text, "A negative keyboard bevel must preserve the earlier extrusion");
+  await button("Undo edit").click();
+  assert.equal((await dump()).text, original.text, "A canceled bevel must not add an undo step");
   async function bevel(side) {
     await button("Reset to cube").click();
     await page.getByLabel("Drag operation").selectOption("bevel");

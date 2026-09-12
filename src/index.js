@@ -2,7 +2,6 @@ import { createFeatureEditing } from "./featureEditing.js";
 import { assertSafeEdit, constrainEdit } from "./intersections.js";
 import { triangulatePolygon } from "./extrusionJoins.js";
 import {
-  bevelFace,
   splitFace,
   cube,
   inset,
@@ -18,6 +17,7 @@ import {
   makeDragAxis,
   dragDistance,
   previewExtrusion,
+  previewBevel,
   inwardLimit,
   bevelWidth,
   MIN_EXTRUSION,
@@ -253,18 +253,18 @@ export function createExperiment(ctx) {
         previewExtrusion(source, face, distance),
         face,
       );
-    if (Math.abs(distance) < MIN_EXTRUSION && !widthChanged)
-      return cloneMesh(source);
-    const base =
-      distance < 0 ? previewExtrusion(source, face, distance) : source;
     return assertSafeEdit(
       source,
-      bevelFace(base, face, capFraction, Math.max(0, distance)),
+      previewBevel(source, face, distance, capFraction, widthChanged),
       face,
     );
   }
   function keyboardPull() {
     if (Math.abs(keyboardDistance) < MIN_EXTRUSION) return;
+    if (operation === "bevel" && keyboardDistance < 0) {
+      ctx.setStatus("Bevel height stops at the starting face. Earlier extrusions are preserved.");
+      return;
+    }
     if (keyboardDistance < 0 && inwardLimit(mesh, selected) === 0) {
       ctx.setStatus("Blocked: another extrusion is attached to this face.");
       return;
@@ -556,7 +556,7 @@ export function createExperiment(ctx) {
           start: [event.clientX, event.clientY],
           axis,
           distance: 0,
-          minDistance: inwardLimit(mesh, selected),
+          minDistance: operation === "bevel" ? 0 : inwardLimit(mesh, selected),
           fraction,
           initialFraction: fraction,
           widthChanged: false,
@@ -612,7 +612,9 @@ export function createExperiment(ctx) {
         const distance = Math.max(drag.minDistance, requestedDistance);
         const limitMessage =
           requestedDistance < drag.minDistance - 0.002
-            ? drag.minDistance === 0
+            ? operation === "bevel"
+              ? "Bevel height stops at the starting face. Earlier extrusions are preserved."
+              : drag.minDistance === 0
               ? "Blocked: another extrusion is attached to this face."
               : "Blocked by the supporting surface."
             : null;

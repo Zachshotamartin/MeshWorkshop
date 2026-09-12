@@ -1,5 +1,5 @@
 import { faceMovementWeights } from "./deformation.js";
-import { cloneMesh, extrude, faceNormal } from "./mesh.js";
+import { bevelFace, cloneMesh, extrude, faceNormal } from "./mesh.js";
 import { recordShorteningSweep } from "./extrusionContacts.js";
 
 const EPSILON = 1e-8;
@@ -141,6 +141,14 @@ export function previewExtrusion(source, face, distance) {
       (v, i) => v + normal[i] * distance,
     );
   return recordShorteningSweep(source, result, face, normal);
+}
+
+/** A bevel is added above its starting face; reversing it cannot shorten older edits. */
+export function previewBevel(source, face, distance, fraction, widthChanged = false) {
+  if (!Number.isFinite(distance)) throw new Error("Bevel height must be finite.");
+  const height = Math.max(0, distance);
+  if (height < MIN_EXTRUSION && !widthChanged) return cloneMesh(source);
+  return bevelFace(source, face, fraction, height);
 }
 
 /** The perpendicular gesture adjusts cap width without changing normal depth. */

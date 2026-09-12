@@ -5,6 +5,7 @@ import {
   makeDragAxis,
   dragDistance,
   previewExtrusion,
+  previewBevel,
   inwardLimit,
   bevelWidth,
 } from "../src/drag.js";
@@ -128,4 +129,20 @@ test("signed depth and perpendicular cap width are independent and bounded", () 
   assert.ok(wide.fraction < 0.22);
   assert.equal(bevelWidth(axis, [0, 0], [0, -50], 0.22, 500).fraction, 0.22);
   assert.equal(bevelWidth(axis, [0, 0], [10000, 0], 0.22, 500).fraction, 0.78);
+});
+
+test("reversing a bevel preserves every earlier extrusion and its undo baseline", () => {
+  const raised = previewExtrusion(previewExtrusion(cube(), 5, 1), 5, .5);
+  const original = structuredClone(raised);
+  for (const distance of [1, .4, 0, -.5, -3]) {
+    const next = previewBevel(raised, 5, distance, .22);
+    assert.deepEqual(next.vertices.slice(0, raised.vertices.length), raised.vertices);
+    if (distance <= 0) assert.deepEqual(next, raised);
+    assert.equal(topology(next).boundary, 0);
+    assert.equal(topology(next).nonManifold, 0);
+  }
+  const flat = previewBevel(raised, 5, -.5, .3, true);
+  assert.deepEqual(flat.vertices.slice(0, raised.vertices.length), raised.vertices);
+  assert.ok(flat.faces[5].every(id => Math.abs(flat.vertices[id][1] - 2.5) < 1e-9));
+  assert.deepEqual(raised, original);
 });
